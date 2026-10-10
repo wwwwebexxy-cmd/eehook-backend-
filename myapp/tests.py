@@ -490,6 +490,31 @@ class CookieAuthenticationSecurityTests(TestCase):
         self.assertEqual(logout.cookies[settings.JWT_REFRESH_COOKIE_NAME]["max-age"], 0)
         self.assertEqual(self.client.get("/auth/session/").status_code, 401)
 
+    def test_browser_cookie_takes_precedence_over_stale_bearer_token_for_admin_api(self):
+        admin = User.objects.create_superuser(
+            email="cookie-super-admin@example.invalid",
+            password="CookieAdminPass123!",
+        )
+        login_response = self.client.post(
+            "/login/",
+            {
+                "email": admin.email,
+                "password": "CookieAdminPass123!",
+                "login_type": "super_admin",
+            },
+            format="json",
+        )
+        self.assertEqual(login_response.status_code, 200, login_response.data)
+
+        # Simulate an older tab that still sends a customer bearer token.
+        customer_refresh = RefreshToken.for_user(self.user)
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {str(customer_refresh.access_token)}"
+        )
+
+        response = self.client.get("/admin/manage/categories/")
+        self.assertEqual(response.status_code, 200, response.data)
+
     @patch("myapp.views.id_token.verify_oauth2_token")
     def test_google_login_uses_the_same_cookie_only_contract(self, verify_token):
         verify_token.return_value = {

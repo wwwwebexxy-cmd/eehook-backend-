@@ -22,6 +22,15 @@ server {
 
     client_max_body_size 10m;
 
+    location /static/ {
+        alias /srv/eehook-backend/staticfiles/;
+    }
+
+    # Django's MEDIA_ROOT is the repository's uploads/ directory.
+    location /media/ {
+        alias /srv/eehook-backend/uploads/;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;

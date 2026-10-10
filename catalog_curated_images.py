@@ -197,6 +197,31 @@ URL_POOLS = {
 def pool_key(variant):
     name = variant.product.name.lower()
     category = variant.product.category.name.lower()
+    subcategory = variant.product.subcategory.name.lower()
+
+    # Prefer the catalog taxonomy over keyword guesses. Product names such as
+    # "compact smartphone" and "XR headset" otherwise select the wrong pool.
+    if subcategory in {"mobiles", "iphone"}:
+        return "smartphone"
+    if subcategory in {"laptop", "macbook"}:
+        return "laptop"
+    if subcategory in {"ipad"}:
+        return "tablet"
+    if subcategory in {"consoles"}:
+        return "console"
+    if subcategory in {"games"}:
+        return "game_box"
+    if subcategory in {"gaming accessories"}:
+        return "headset" if "headset" in name else "console"
+    if subcategory in {"men", "women", "unisex", "fitness bands", "iwatches"}:
+        return "smartwatch"
+    if subcategory in {"vr headsets"}:
+        return "vr"
+    if subcategory in {"smart glasses"}:
+        return "glasses"
+    if subcategory in {"accessories"}:
+        return "cable" if "cable" in name else "charger"
+
     if "vegetable" in category:
         return "curry" if "curry" in name else "spinach"
     if "gaming" in category and "retro" in name:
