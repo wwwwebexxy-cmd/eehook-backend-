@@ -27,6 +27,7 @@ from django.utils.http import (
 )
 from django.utils.encoding import force_bytes
 from django.utils import timezone
+from django.utils.html import escape
 from django.middleware.csrf import get_token
 
 from rest_framework.decorators import api_view
@@ -225,25 +226,35 @@ def google_login(request):
         )
 
         email = str(info.get("email") or "").strip().lower()
-        first_name = info.get("given_name", "")
+        first_name = str(info.get("given_name") or "").strip()
 
-        if not email or str(info.get("email_verified", "")).lower() != "true":
+        # google-auth verifies the signature, issuer, audience, and expiry for
+        # this ID token. Only accept the provider's boolean verification flag
+        # as well; a client-submitted email address is never trusted here.
+        if not email or info.get("email_verified") is not True:
             return Response(
                 {"error": "A verified Google account email is required."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        user, created = User.objects.get_or_create(
-            email=email.lower(),
-            defaults={
-                "first_name": first_name,
-                "is_active": True,
-            }
-        )
+        # Email is the existing account identity in this project. A verified
+        # Google email therefore links to an existing account instead of
+        # creating a duplicate, while a new Google account gets the same
+        # profile record as a password registration.
+        with transaction.atomic():
+            user, created = User.objects.get_or_create(
+                email=email,
+                defaults={
+                    "first_name": first_name,
+                    "is_active": True,
+                }
+            )
 
-        if created:
-            user.set_unusable_password()
-            user.save()
+            if created:
+                user.set_unusable_password()
+                user.save(update_fields=["password"])
+
+            UserProfile.objects.get_or_create(user=user)
 
         if not user.is_active:
             return Response(
@@ -384,6 +395,8 @@ def forgot_password(request):
             uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
             token = default_token_generator.make_token(user)
             reset_link = f"{settings.SITE_URL}/reset-password/{uidb64}/{token}"
+            greeting_name = escape(user.first_name or "there")
+            escaped_reset_link = escape(reset_link)
             smtp_backend = "django.core.mail.backends.smtp.EmailBackend"
             smtp_configured = bool(
                 settings.EMAIL_HOST_USER and settings.EMAIL_HOST_PASSWORD
@@ -406,6 +419,12 @@ If you did not request this, you can ignore this email.
 """,
                         from_email=settings.DEFAULT_FROM_EMAIL,
                         recipient_list=[user.email],
+                        html_message=f"""
+<p>Hello {greeting_name},</p>
+<p>Use the button below to reset your eehook password. This link expires according to the server's password-reset policy and can only be used once.</p>
+<p><a href="{escaped_reset_link}">Reset Password</a></p>
+<p>If you did not request this, you can ignore this email.</p>
+""",
                         fail_silently=False,
                     )
                 except Exception:

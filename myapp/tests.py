@@ -52,6 +52,7 @@ from .models import (
     Unit,
     UnitType,
     User,
+    UserProfile,
     Wishlist,
     WelcomeBonus,
     WelcomeBonusAssignment,
@@ -282,6 +283,34 @@ class SecurityBoundaryTests(TestCase):
         self.assertEqual(
             User.objects.filter(email="new-google-user@example.invalid").count(), 1
         )
+        google_user = User.objects.get(email="new-google-user@example.invalid")
+        self.assertTrue(UserProfile.objects.filter(user=google_user).exists())
+
+    @patch("myapp.views.id_token.verify_oauth2_token")
+    def test_google_login_links_verified_email_without_replacing_password_account(self, verify_token):
+        user = User.objects.create_user(
+            email="existing-google-link@example.invalid",
+            password="ExistingPass123!",
+            role="Customer",
+        )
+        verify_token.return_value = {
+            "email": user.email,
+            "email_verified": True,
+            "given_name": "Existing",
+        }
+
+        response = self.client.post(
+            "/google-login/", {"token": "google-token"}, format="json"
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            User.objects.filter(email="existing-google-link@example.invalid").count(),
+            1,
+        )
+        user.refresh_from_db()
+        self.assertTrue(user.check_password("ExistingPass123!"))
+        self.assertTrue(UserProfile.objects.filter(user=user).exists())
 
     @override_settings(GOOGLE_CLIENT_ID="")
     @patch("myapp.views.id_token.verify_oauth2_token")
