@@ -224,7 +224,7 @@ JWT_COOKIE_SECURE = not DEBUG
 
 # Google Login
 
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 
 
 # Email
@@ -237,6 +237,11 @@ EMAIL_USE_TLS = True
 
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
+DEFAULT_FROM_EMAIL = os.getenv(
+    "DEFAULT_FROM_EMAIL",
+    EMAIL_HOST_USER or "no-reply@eehook.invalid",
+).strip()
+EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "20"))
 
 
 # CORS: browser cookies require an explicit, trusted storefront allowlist.
@@ -324,6 +329,11 @@ ADMIN_LOGIN_WINDOW = int(os.getenv("ADMIN_LOGIN_WINDOW", "900"))
 SITE_URL = os.getenv("SITE_URL", "http://localhost:5173").rstrip("/")
 if not (DEBUG or _IS_TESTING) and not SITE_URL.startswith("https://"):
     raise RuntimeError("SITE_URL must use HTTPS when DEBUG=False")
+
+# Django's password-reset token generator checks this value when validating a
+# token. Keep the lifetime explicit so local and production deployments use
+# the same security policy instead of relying on Django's default.
+PASSWORD_RESET_TIMEOUT = int(os.getenv("PASSWORD_RESET_TIMEOUT", "3600"))
 
 
 # Stripe

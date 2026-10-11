@@ -169,7 +169,7 @@ class TrustBenefitApiTests(TestCase):
         )
 
 
-@override_settings(SECURE_SSL_REDIRECT=False)
+@override_settings(SECURE_SSL_REDIRECT=False, GOOGLE_CLIENT_ID="test-google-client-id")
 class SecurityBoundaryTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -253,6 +253,65 @@ class SecurityBoundaryTests(TestCase):
             self.client.post("/google-login/", {"token": "token"}, format="json").status_code,
             403,
         )
+
+    @patch("myapp.views.id_token.verify_oauth2_token", side_effect=ValueError("expired"))
+    def test_google_login_rejects_invalid_or_expired_credentials(self, verify_token):
+        response = self.client.post(
+            "/google-login/", {"token": "expired-token"}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("invalid or expired", response.data["error"])
+
+    @patch("myapp.views.id_token.verify_oauth2_token")
+    def test_google_login_creates_one_customer_and_reuses_it(self, verify_token):
+        verify_token.return_value = {
+            "email": "new-google-user@example.invalid",
+            "email_verified": True,
+            "given_name": "Google",
+        }
+
+        first = self.client.post(
+            "/google-login/", {"token": "google-token"}, format="json"
+        )
+        second = self.client.post(
+            "/google-login/", {"token": "google-token"}, format="json"
+        )
+
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertEqual(
+            User.objects.filter(email="new-google-user@example.invalid").count(), 1
+        )
+
+    @override_settings(GOOGLE_CLIENT_ID="")
+    @patch("myapp.views.id_token.verify_oauth2_token")
+    def test_google_login_reports_missing_server_configuration(self, verify_token):
+        response = self.client.post(
+            "/google-login/", {"token": "google-token"}, format="json"
+        )
+        self.assertEqual(response.status_code, 503)
+        verify_token.assert_not_called()
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        EMAIL_HOST_USER="noreply@example.invalid",
+        DEFAULT_FROM_EMAIL="noreply@example.invalid",
+    )
+    @patch("myapp.views.send_mail", side_effect=OSError("SMTP unavailable"))
+    def test_password_reset_delivery_failure_keeps_generic_response(self, send_mail):
+        user = User.objects.create_user(
+            email="delivery-failure@example.invalid",
+            password="ExistingPass123!",
+        )
+        response = self.client.post(
+            "/forgot-password/", {"email": user.email}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data["message"],
+            "If the account exists, a reset email will be sent.",
+        )
+        send_mail.assert_called_once()
 
     @patch("payment.views.stripe.Refund.create")
     def test_unfulfillable_paid_checkout_is_refunded_once(self, refund):
@@ -395,6 +454,16 @@ class SecurityBoundaryTests(TestCase):
         user.refresh_from_db()
         self.assertTrue(user.check_password("NewStrongPass123!"))
 
+        reused_token_response = self.client.post(
+            f"{reset_path}/",
+            {
+                "password": "AnotherStrongPass123!",
+                "confirm_password": "AnotherStrongPass123!",
+            },
+            format="json",
+        )
+        self.assertEqual(reused_token_response.status_code, 400)
+
         weak_reset_response = self.client.post(
             f"{reset_path}/",
             {
@@ -414,7 +483,11 @@ class SecurityBoundaryTests(TestCase):
         self.assertEqual(response.status_code, 429)
 
 
-@override_settings(SECURE_SSL_REDIRECT=False, JWT_COOKIE_SECURE=True)
+@override_settings(
+    SECURE_SSL_REDIRECT=False,
+    JWT_COOKIE_SECURE=True,
+    GOOGLE_CLIENT_ID="test-google-client-id",
+)
 class CookieAuthenticationSecurityTests(TestCase):
     def setUp(self):
         cache.clear()

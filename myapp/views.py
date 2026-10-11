@@ -208,6 +208,13 @@ def google_login(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
+    if not settings.GOOGLE_CLIENT_ID:
+        logger.error("Google authentication is unavailable: GOOGLE_CLIENT_ID is not configured.")
+        return Response(
+            {"error": "Google sign-in is not configured. Please use email and password."},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
     try:
 
         info = id_token.verify_oauth2_token(
@@ -217,7 +224,7 @@ def google_login(request):
             clock_skew_in_seconds=30
         )
 
-        email = info.get("email")
+        email = str(info.get("email") or "").strip().lower()
         first_name = info.get("given_name", "")
 
         if not email or str(info.get("email_verified", "")).lower() != "true":
@@ -264,10 +271,10 @@ def google_login(request):
             refresh_token=str(refresh),
         )
 
-    except GoogleAuthError:
+    except (GoogleAuthError, ValueError):
         return Response(
             {
-                "error": "Google authentication failed. Please try again."
+                "error": "The Google credential is invalid or expired. Please try again."
             },
             status=status.HTTP_400_BAD_REQUEST
         )
@@ -373,26 +380,41 @@ def forgot_password(request):
 
     if serializer.is_valid():
         user = serializer.validated_data["user"]
-        if user:
+        if user and user.is_active:
             uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
             token = default_token_generator.make_token(user)
             reset_link = f"{settings.SITE_URL}/reset-password/{uidb64}/{token}"
-            send_mail(
-                subject="Reset Your Password",
-                message=f"""
-                Hello {user.first_name},
-
-                Click the link below to reset your password:
-
-                {reset_link}
-
-                Thank You,
-                Amora Team
-                """,
-                from_email=settings.EMAIL_HOST_USER,
-                recipient_list=[user.email],
-                fail_silently=False,
+            smtp_backend = "django.core.mail.backends.smtp.EmailBackend"
+            smtp_configured = bool(
+                settings.EMAIL_HOST_USER and settings.EMAIL_HOST_PASSWORD
             )
+            if settings.EMAIL_BACKEND == smtp_backend and not smtp_configured:
+                logger.error(
+                    "Password reset email was not sent: SMTP credentials are not configured."
+                )
+            else:
+                try:
+                    send_mail(
+                        subject="Reset your eehook password",
+                        message=f"""Hello {user.first_name or 'there'},
+
+Use the link below to reset your eehook password. This link expires according to the server's password-reset policy and can only be used once.
+
+{reset_link}
+
+If you did not request this, you can ignore this email.
+""",
+                        from_email=settings.DEFAULT_FROM_EMAIL,
+                        recipient_list=[user.email],
+                        fail_silently=False,
+                    )
+                except Exception:
+                    # Keep the response generic and never log the reset link or
+                    # token. The error remains visible in server diagnostics.
+                    logger.exception(
+                        "Password reset email delivery failed for user_id=%s",
+                        user.pk,
+                    )
 
     # Keep the response and status identical whether an account exists or not.
     return Response({"message": "If the account exists, a reset email will be sent."}, status=200)
