@@ -17,7 +17,10 @@ class AbuseProtectionMiddleware:
     """Limit request floods and slow down repeated admin login failures."""
 
     EXEMPT_PREFIXES = ("/static/", "/media/", "/health/")
-    EXEMPT_PATHS = ("/payment/stripe-webhook/",)
+    EXEMPT_PATHS = (
+        "/payment/stripe-webhook/",
+        "/payment/cashfree-webhook/",
+    )
 
     @staticmethod
     def _client_ip(request):
