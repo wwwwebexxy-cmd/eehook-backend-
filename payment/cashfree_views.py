@@ -56,7 +56,7 @@ def _money(value):
 
 
 def _cashfree_currency():
-    currency = str(getattr(settings, "CASHFREE_ORDER_CURRENCY", "AED") or "AED").upper()
+    currency = str(getattr(settings, "CASHFREE_ORDER_CURRENCY", "INR") or "INR").upper()
     if len(currency) != 3 or not currency.isalpha():
         raise ValueError("CASHFREE_ORDER_CURRENCY must be a three-letter currency code.")
     return currency

@@ -347,7 +347,7 @@ PASSWORD_RESET_TIMEOUT = int(os.getenv("PASSWORD_RESET_TIMEOUT", "3600"))
 CASHFREE_ENV = os.getenv("CASHFREE_ENV", "sandbox").strip().lower()
 CASHFREE_CLIENT_ID = os.getenv("CASHFREE_CLIENT_ID", "").strip()
 CASHFREE_CLIENT_SECRET = os.getenv("CASHFREE_CLIENT_SECRET", "").strip()
-CASHFREE_ORDER_CURRENCY = os.getenv("CASHFREE_ORDER_CURRENCY", "AED").strip().upper()
+CASHFREE_ORDER_CURRENCY = os.getenv("CASHFREE_ORDER_CURRENCY", "INR").strip().upper()
 CASHFREE_WEBHOOK_URL = os.getenv("CASHFREE_WEBHOOK_URL", "").strip()
 
 # Legacy Stripe settings are kept for the old endpoint until Stripe is
