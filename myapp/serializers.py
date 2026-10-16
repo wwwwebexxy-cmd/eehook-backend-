@@ -1166,6 +1166,23 @@ class ProductHighlightSerializer(serializers.ModelSerializer):
             "highlight_type",
             "text",
             "icon_key",
+            "background_color",
+            "ends_at",
+            "display_order",
+            "rotation_seconds",
+            "is_active",
+        )
+        read_only_fields = ("id",)
+
+
+class ProductMessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductMessage
+        fields = (
+            "id",
+            "message_type",
+            "text",
+            "background_color",
             "ends_at",
             "display_order",
             "rotation_seconds",
@@ -1185,6 +1202,21 @@ def get_active_product_highlights(product):
             highlight.highlight_type != ProductHighlight.COUNTDOWN
             or not highlight.ends_at
             or highlight.ends_at > now
+        )
+    ]
+
+
+def get_active_product_messages(product):
+    now = timezone.now()
+    messages = product.product_messages.all()
+    return [
+        message
+        for message in messages
+        if message.is_active
+        and (
+            message.message_type != ProductMessage.COUNTDOWN
+            or not message.ends_at
+            or message.ends_at > now
         )
     ]
 
@@ -1228,6 +1260,8 @@ class ProductSerializer(serializers.ModelSerializer):
 
     marketing_highlights = serializers.SerializerMethodField()
 
+    product_messages = serializers.SerializerMethodField()
+
     class Meta:
 
         model = Product
@@ -1258,6 +1292,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "promotional_banner_link",
             "related_products",
             "marketing_highlights",
+            "product_messages",
         ]
 
     def get_starting_price(
@@ -1342,6 +1377,13 @@ class ProductSerializer(serializers.ModelSerializer):
             context=self.context,
         ).data
 
+    def get_product_messages(self, obj):
+        return ProductMessageSerializer(
+            get_active_product_messages(obj),
+            many=True,
+            context=self.context,
+        ).data
+
 
 class HomepageProductSerializer(serializers.ModelSerializer):
     """Small product-card payload used by capped homepage discovery sections."""
@@ -1361,6 +1403,7 @@ class HomepageProductSerializer(serializers.ModelSerializer):
     default_variant_id = serializers.SerializerMethodField()
     default_variant_unit_id = serializers.SerializerMethodField()
     marketing_highlights = serializers.SerializerMethodField()
+    product_messages = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -1385,6 +1428,7 @@ class HomepageProductSerializer(serializers.ModelSerializer):
             "estimated_delivery_time",
             "warranty_info",
             "marketing_highlights",
+            "product_messages",
         ]
 
     def _price_values(self, obj):
@@ -1393,6 +1437,13 @@ class HomepageProductSerializer(serializers.ModelSerializer):
     def get_marketing_highlights(self, obj):
         return ProductHighlightSerializer(
             get_active_product_highlights(obj),
+            many=True,
+            context=self.context,
+        ).data
+
+    def get_product_messages(self, obj):
+        return ProductMessageSerializer(
+            get_active_product_messages(obj),
             many=True,
             context=self.context,
         ).data

@@ -685,6 +685,9 @@ def _homepage_product_queryset(products=None):
     highlight_queryset = ProductHighlight.objects.filter(is_active=True).order_by(
         "display_order", "id"
     )
+    message_queryset = ProductMessage.objects.filter(is_active=True).order_by(
+        "display_order", "id"
+    )
     return (
         products
         .filter(is_active=True)
@@ -696,6 +699,7 @@ def _homepage_product_queryset(products=None):
         .prefetch_related(
             Prefetch("variants", queryset=variant_queryset),
             Prefetch("marketing_highlights", queryset=highlight_queryset),
+            Prefetch("product_messages", queryset=message_queryset),
         )
         .distinct()
     )

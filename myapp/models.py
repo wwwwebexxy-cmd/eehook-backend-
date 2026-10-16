@@ -1,7 +1,7 @@
 from django.db import models, transaction
 from django.contrib.auth.models import ( AbstractUser, BaseUserManager)
 from django.core.exceptions import ValidationError
-from django.core.validators import MaxValueValidator, MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.utils.text import slugify
 
 
@@ -281,6 +281,17 @@ class ProductHighlight(models.Model):
         choices=ICON_CHOICES,
         default="tag",
     )
+    background_color = models.CharField(
+        max_length=7,
+        default="#EAF4FF",
+        validators=(
+            RegexValidator(
+                regex=r"^#[0-9A-Fa-f]{6}$",
+                message="Use a 6-digit hex color such as #EAF4FF.",
+            ),
+        ),
+        help_text="The message chip background color, for example #EAF4FF.",
+    )
     ends_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -309,6 +320,76 @@ class ProductHighlight(models.Model):
         super().clean()
         if self.highlight_type == self.COUNTDOWN and not self.ends_at:
             raise ValidationError({"ends_at": "Countdown highlights require an end time."})
+
+    def __str__(self):
+        return f"{self.product.name}: {self.text}"
+
+
+class ProductMessage(models.Model):
+    """Dynamic product-card messages shown separately from marketing highlights."""
+
+    TEXT = "text"
+    COUNTDOWN = "countdown"
+    DELIVERY = "delivery"
+    MESSAGE_TYPE_CHOICES = (
+        (TEXT, "Text"),
+        (COUNTDOWN, "Countdown"),
+        (DELIVERY, "Delivery"),
+    )
+
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="product_messages",
+    )
+    message_type = models.CharField(
+        max_length=20,
+        choices=MESSAGE_TYPE_CHOICES,
+        default=TEXT,
+    )
+    text = models.CharField(
+        max_length=120,
+        help_text='Example: "GET IT IN" or "EXPRESS TOMORROW".',
+    )
+    background_color = models.CharField(
+        max_length=7,
+        default="#EAF4FF",
+        validators=(
+            RegexValidator(
+                regex=r"^#[0-9A-Fa-f]{6}$",
+                message="Use a 6-digit hex color such as #EAF4FF.",
+            ),
+        ),
+        help_text="The message background color, for example #EAF4FF.",
+    )
+    ends_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Required for countdown messages.",
+    )
+    display_order = models.PositiveIntegerField(default=0)
+    rotation_seconds = models.PositiveSmallIntegerField(
+        default=4,
+        validators=(MinValueValidator(2), MaxValueValidator(60)),
+        help_text="How long this message stays visible before the next one.",
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("display_order", "id")
+        indexes = (
+            models.Index(
+                fields=("product", "is_active", "display_order"),
+                name="product_message_order_idx",
+            ),
+        )
+
+    def clean(self):
+        super().clean()
+        if self.message_type == self.COUNTDOWN and not self.ends_at:
+            raise ValidationError({"ends_at": "Countdown messages require an end time."})
 
     def __str__(self):
         return f"{self.product.name}: {self.text}"

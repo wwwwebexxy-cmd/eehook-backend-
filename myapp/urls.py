@@ -137,6 +137,7 @@ from .super_admin_api import (
     AdminOrderViewSet,
     AdminProductImageViewSet,
     AdminProductHighlightViewSet,
+    AdminProductMessageViewSet,
     AdminProductVariantUnitViewSet,
     AdminProductVariantViewSet,
     AdminProductViewSet,
@@ -166,6 +167,7 @@ router.register(r'admin/manage/units', AdminUnitViewSet, basename='admin-manage-
 router.register(r'admin/manage/regions', AdminRegionViewSet, basename='admin-manage-region')
 router.register(r'admin/manage/products', AdminProductViewSet, basename='admin-manage-product')
 router.register(r'admin/manage/product-highlights', AdminProductHighlightViewSet, basename='admin-manage-product-highlight')
+router.register(r'admin/manage/product-messages', AdminProductMessageViewSet, basename='admin-manage-product-message')
 router.register(r'admin/manage/product-variants', AdminProductVariantViewSet, basename='admin-manage-product-variant')
 router.register(r'admin/manage/product-variant-units', AdminProductVariantUnitViewSet, basename='admin-manage-product-variant-unit')
 router.register(r'admin/manage/product-images', AdminProductImageViewSet, basename='admin-manage-product-image')

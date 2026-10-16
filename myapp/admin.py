@@ -598,3 +598,19 @@ class ProductHighlightAdmin(admin.ModelAdmin):
     list_filter = ("highlight_type", "icon_key", "is_active")
     search_fields = ("product__name", "text")
     ordering = ("product", "display_order", "id")
+
+
+@admin.register(ProductMessage)
+class ProductMessageAdmin(admin.ModelAdmin):
+    list_display = (
+        "product",
+        "message_type",
+        "text",
+        "display_order",
+        "rotation_seconds",
+        "is_active",
+        "ends_at",
+    )
+    list_filter = ("message_type", "is_active")
+    search_fields = ("product__name", "text")
+    ordering = ("product", "display_order", "id")
