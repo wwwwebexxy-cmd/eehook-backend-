@@ -581,3 +581,20 @@ class CouponApplicationAdmin(admin.ModelAdmin):
     list_display = ('user', 'coupon', 'product', 'applied_at')
     search_fields = ('user__email', 'coupon__code', 'product__name')
     list_filter = ('applied_at',)
+
+
+@admin.register(ProductHighlight)
+class ProductHighlightAdmin(admin.ModelAdmin):
+    list_display = (
+        "product",
+        "highlight_type",
+        "text",
+        "icon_key",
+        "display_order",
+        "rotation_seconds",
+        "is_active",
+        "ends_at",
+    )
+    list_filter = ("highlight_type", "icon_key", "is_active")
+    search_fields = ("product__name", "text")
+    ordering = ("product", "display_order", "id")

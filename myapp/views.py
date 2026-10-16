@@ -682,6 +682,9 @@ def _homepage_product_queryset(products=None):
         .prefetch_related("images", "sizes__unit__unit_type")
         .order_by("id")
     )
+    highlight_queryset = ProductHighlight.objects.filter(is_active=True).order_by(
+        "display_order", "id"
+    )
     return (
         products
         .filter(is_active=True)
@@ -690,7 +693,10 @@ def _homepage_product_queryset(products=None):
             | Q(variants__price_type="multiple", variants__sizes__price__isnull=False)
         )
         .select_related("category", "subcategory", "brand", "offer")
-        .prefetch_related(Prefetch("variants", queryset=variant_queryset))
+        .prefetch_related(
+            Prefetch("variants", queryset=variant_queryset),
+            Prefetch("marketing_highlights", queryset=highlight_queryset),
+        )
         .distinct()
     )
 
@@ -1781,7 +1787,7 @@ def update_cart_quantity(request, id):
     )
 
 from django.db import transaction
-from .whatsapp import send_owner_order_notification
+from .order_notifications import send_order_notifications
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
@@ -2023,7 +2029,7 @@ def place_order(request):
     Cart.objects.filter(pk__in=[item.pk for item in cart_items]).delete()
 
     transaction.on_commit(
-        lambda order_id=order.id: send_owner_order_notification(order_id)
+        lambda order_id=order.id: send_order_notifications(order_id)
     )
 
     return Response(

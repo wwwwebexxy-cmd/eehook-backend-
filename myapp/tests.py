@@ -42,6 +42,7 @@ from .models import (
     Order,
     OrderItem,
     Product,
+    ProductHighlight,
     ProductImage,
     ProductRelatedProduct,
     ProductVariant,
@@ -1827,6 +1828,35 @@ class HomepageDiscoveryTests(TestCase):
         empty_response = empty_client.get("/recently-viewed/")
         self.assertEqual(empty_response.status_code, 200)
         self.assertEqual(empty_response.data, [])
+
+    def test_homepage_serializes_active_product_highlights_and_omits_expired_countdowns(self):
+        product, _ = self.create_product("Highlighted homepage product")
+        ProductHighlight.objects.create(
+            product=product,
+            highlight_type=ProductHighlight.MESSAGE,
+            text="LOWEST PRICE",
+            icon_key="tag",
+            display_order=0,
+        )
+        ProductHighlight.objects.create(
+            product=product,
+            highlight_type=ProductHighlight.COUNTDOWN,
+            text="GET IT IN",
+            icon_key="clock",
+            ends_at=timezone.now() - timedelta(minutes=1),
+            display_order=1,
+        )
+
+        response = self.client.get("/homepage/")
+        self.assertEqual(response.status_code, 200, response.data)
+        homepage_product = next(
+            item for item in response.data["new_arrivals"] if item["id"] == product.id
+        )
+        self.assertEqual(
+            homepage_product["marketing_highlights"][0]["text"],
+            "LOWEST PRICE",
+        )
+        self.assertEqual(len(homepage_product["marketing_highlights"]), 1)
 
         product, _ = self.create_product("Actually viewed product")
         self.client.get(f"/product/{product.id}/")

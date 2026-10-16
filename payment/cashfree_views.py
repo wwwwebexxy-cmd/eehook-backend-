@@ -38,7 +38,7 @@ from myapp.welcome_bonus import (
     get_eligible_welcome_bonus_assignment,
     redeem_welcome_bonus_assignment,
 )
-from myapp.whatsapp import send_owner_order_notification
+from myapp.order_notifications import send_order_notifications
 
 from .cashfree_services import CashfreeAPIError, CashfreeService
 from .models import CashfreeCheckout
@@ -503,7 +503,7 @@ def fulfill_cashfree_checkout(checkout):
     checkout.order = order
     checkout.status = "Fulfilled"
     checkout.save(update_fields=("order", "status", "updated_at"))
-    transaction.on_commit(lambda order_id=order.id: send_owner_order_notification(order_id))
+    transaction.on_commit(lambda order_id=order.id: send_order_notifications(order_id))
     return order
 
 

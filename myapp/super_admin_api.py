@@ -32,6 +32,7 @@ from .models import (
     Order,
     OrderItem,
     Product,
+    ProductHighlight,
     ProductImage,
     ProductRelatedProduct,
     ProductVariant,
@@ -572,6 +573,52 @@ class AdminProductViewSet(AdminModelViewSet):
     ordering = ("-created_at",)
 
 
+class AdminProductHighlightSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductHighlight
+        fields = "__all__"
+        read_only_fields = ("id", "created_at", "updated_at")
+
+    def validate(self, attrs):
+        highlight_type = attrs.get(
+            "highlight_type",
+            getattr(self.instance, "highlight_type", ProductHighlight.MESSAGE),
+        )
+        ends_at = attrs.get("ends_at", getattr(self.instance, "ends_at", None))
+        if highlight_type == ProductHighlight.COUNTDOWN and not ends_at:
+            raise serializers.ValidationError(
+                {"ends_at": "Countdown highlights require an end time."}
+            )
+        return attrs
+
+    def create(self, validated_data):
+        instance = ProductHighlight(**validated_data)
+        instance.full_clean()
+        instance.save()
+        return instance
+
+    def update(self, instance, validated_data):
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        instance.full_clean()
+        instance.save()
+        return instance
+
+
+class AdminProductHighlightViewSet(AdminModelViewSet):
+    queryset = ProductHighlight.objects.select_related("product").all()
+    serializer_class = AdminProductHighlightSerializer
+    search_fields = ("product__name", "text")
+    ordering = ("product_id", "display_order", "id")
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        product_id = self.request.query_params.get("product")
+        if product_id:
+            queryset = queryset.filter(product_id=product_id)
+        return queryset
+
+
 class AdminProductVariantViewSet(AdminModelViewSet):
     queryset = ProductVariant.objects.select_related("product", "color").order_by("id")
     search_fields = ("product__name", "color__name")
@@ -843,6 +890,7 @@ ADMIN_RESOURCES = (
     ("units", Unit, "admin/manage/units/"),
     ("regions", Region, "admin/manage/regions/"),
     ("products", Product, "admin/manage/products/"),
+    ("product-highlights", ProductHighlight, "admin/manage/product-highlights/"),
     ("product-variants", ProductVariant, "admin/manage/product-variants/"),
     ("product-variant-units", ProductVariantUnit, "admin/manage/product-variant-units/"),
     ("product-images", ProductImage, "admin/manage/product-images/"),

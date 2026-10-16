@@ -234,20 +234,50 @@ EMAIL_BACKEND = os.getenv(
     "django.core.mail.backends.smtp.EmailBackend",
 ).strip()
 
-EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com").strip()
-EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
-EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() in ("true", "1", "t")
-EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "false").lower() in ("true", "1", "t")
+EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "smtp").strip().lower()
+if EMAIL_PROVIDER == "mailtrap":
+    EMAIL_HOST = os.getenv(
+        "MAILTRAP_SMTP_HOST",
+        "sandbox.smtp.mailtrap.io",
+    ).strip()
+    EMAIL_PORT = int(os.getenv("MAILTRAP_SMTP_PORT", "2525"))
+    EMAIL_USE_TLS = True
+    EMAIL_USE_SSL = False
+    EMAIL_HOST_USER = os.getenv(
+        "MAILTRAP_SMTP_USERNAME",
+        os.getenv("EMAIL_HOST_USER", ""),
+    ).strip()
+    EMAIL_HOST_PASSWORD = os.getenv(
+        "MAILTRAP_SMTP_PASSWORD",
+        os.getenv("EMAIL_HOST_PASSWORD", ""),
+    )
+    DEFAULT_FROM_EMAIL = os.getenv(
+        "MAILTRAP_FROM_EMAIL",
+        os.getenv("DEFAULT_FROM_EMAIL", "no-reply@eehook.test"),
+    ).strip()
+else:
+    EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com").strip()
+    EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+    EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() in ("true", "1", "t")
+    EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "false").lower() in ("true", "1", "t")
+    EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "").strip()
+    EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+    DEFAULT_FROM_EMAIL = os.getenv(
+        "DEFAULT_FROM_EMAIL",
+        EMAIL_HOST_USER or "no-reply@eehook.invalid",
+    ).strip()
+
 if EMAIL_USE_TLS and EMAIL_USE_SSL:
     raise RuntimeError("EMAIL_USE_TLS and EMAIL_USE_SSL cannot both be enabled")
 
-EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "").strip()
-EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
-DEFAULT_FROM_EMAIL = os.getenv(
-    "DEFAULT_FROM_EMAIL",
-    EMAIL_HOST_USER or "no-reply@eehook.invalid",
-).strip()
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "20"))
+# New-order notifications are sent here. Falling back to the SMTP username is
+# convenient for a temporary Mailtrap/Gmail setup while still allowing a
+# separate owner inbox in production.
+ORDER_NOTIFICATION_EMAIL = os.getenv(
+    "ORDER_NOTIFICATION_EMAIL",
+    EMAIL_HOST_USER,
+).strip()
 
 
 # CORS: browser cookies require an explicit, trusted storefront allowlist.

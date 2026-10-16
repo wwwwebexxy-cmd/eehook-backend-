@@ -30,7 +30,7 @@ from myapp.models import (
     SavedWelcomeBonus,
     WelcomeBonusAssignment,
 )
-from myapp.whatsapp import send_owner_order_notification
+from myapp.order_notifications import send_order_notifications
 
 from myapp.utils import (
     calculate_offer_price,
@@ -898,7 +898,7 @@ def fulfill_paid_order(session):
         Cart.objects.filter(**cart_filter).delete()
 
     transaction.on_commit(
-        lambda order_id=order.id: send_owner_order_notification(order_id)
+        lambda order_id=order.id: send_order_notifications(order_id)
     )
 
 

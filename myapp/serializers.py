@@ -4,6 +4,7 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils import timezone
 from .models import *
 from .utils import *    
 from .welcome_bonus import (
@@ -1157,6 +1158,37 @@ class WishlistSerializer(serializers.ModelSerializer):
 
         return 0
         
+class ProductHighlightSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductHighlight
+        fields = (
+            "id",
+            "highlight_type",
+            "text",
+            "icon_key",
+            "ends_at",
+            "display_order",
+            "rotation_seconds",
+            "is_active",
+        )
+        read_only_fields = ("id",)
+
+
+def get_active_product_highlights(product):
+    now = timezone.now()
+    highlights = product.marketing_highlights.all()
+    return [
+        highlight
+        for highlight in highlights
+        if highlight.is_active
+        and (
+            highlight.highlight_type != ProductHighlight.COUNTDOWN
+            or not highlight.ends_at
+            or highlight.ends_at > now
+        )
+    ]
+
+
 class ProductSerializer(serializers.ModelSerializer):
 
     category = CategorySerializer(
@@ -1194,6 +1226,8 @@ class ProductSerializer(serializers.ModelSerializer):
 
     related_products = serializers.SerializerMethodField()
 
+    marketing_highlights = serializers.SerializerMethodField()
+
     class Meta:
 
         model = Product
@@ -1223,6 +1257,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "promotional_banner_image",
             "promotional_banner_link",
             "related_products",
+            "marketing_highlights",
         ]
 
     def get_starting_price(
@@ -1300,6 +1335,13 @@ class ProductSerializer(serializers.ModelSerializer):
             context=self.context,
         ).data
 
+    def get_marketing_highlights(self, obj):
+        return ProductHighlightSerializer(
+            get_active_product_highlights(obj),
+            many=True,
+            context=self.context,
+        ).data
+
 
 class HomepageProductSerializer(serializers.ModelSerializer):
     """Small product-card payload used by capped homepage discovery sections."""
@@ -1318,6 +1360,7 @@ class HomepageProductSerializer(serializers.ModelSerializer):
     in_stock = serializers.SerializerMethodField()
     default_variant_id = serializers.SerializerMethodField()
     default_variant_unit_id = serializers.SerializerMethodField()
+    marketing_highlights = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -1341,10 +1384,18 @@ class HomepageProductSerializer(serializers.ModelSerializer):
             "shipping_fee",
             "estimated_delivery_time",
             "warranty_info",
+            "marketing_highlights",
         ]
 
     def _price_values(self, obj):
         return get_product_prices(obj)
+
+    def get_marketing_highlights(self, obj):
+        return ProductHighlightSerializer(
+            get_active_product_highlights(obj),
+            many=True,
+            context=self.context,
+        ).data
 
     def _variant_choices(self, obj):
         choices = []

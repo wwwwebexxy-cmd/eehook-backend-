@@ -238,6 +238,82 @@ class Product(models.Model):
         self.emi_starting_price = None
 
 
+class ProductHighlight(models.Model):
+    """Small rotating product-card messages managed per product."""
+
+    MESSAGE = "message"
+    COUNTDOWN = "countdown"
+    DELIVERY = "delivery"
+    HIGHLIGHT_TYPE_CHOICES = (
+        (MESSAGE, "Message"),
+        (COUNTDOWN, "Countdown"),
+        (DELIVERY, "Delivery"),
+    )
+
+    ICON_CHOICES = (
+        ("tag", "Tag"),
+        ("clock", "Clock"),
+        ("truck", "Delivery truck"),
+        ("zap", "Fast"),
+        ("fire", "Selling fast"),
+        ("shield", "Shield"),
+        ("sparkles", "Sparkles"),
+        ("box", "Package"),
+        ("star", "Star"),
+    )
+
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="marketing_highlights",
+    )
+    highlight_type = models.CharField(
+        max_length=20,
+        choices=HIGHLIGHT_TYPE_CHOICES,
+        default=MESSAGE,
+    )
+    text = models.CharField(
+        max_length=120,
+        help_text='Example: "LOWEST PRICE" or "EXPRESS TOMORROW".',
+    )
+    icon_key = models.CharField(
+        max_length=20,
+        choices=ICON_CHOICES,
+        default="tag",
+    )
+    ends_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Required for countdown highlights.",
+    )
+    display_order = models.PositiveIntegerField(default=0)
+    rotation_seconds = models.PositiveSmallIntegerField(
+        default=4,
+        validators=(MinValueValidator(2), MaxValueValidator(60)),
+        help_text="How long this message stays visible before the next one.",
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("display_order", "id")
+        indexes = (
+            models.Index(
+                fields=("product", "is_active", "display_order"),
+                name="product_highlight_order_idx",
+            ),
+        )
+
+    def clean(self):
+        super().clean()
+        if self.highlight_type == self.COUNTDOWN and not self.ends_at:
+            raise ValidationError({"ends_at": "Countdown highlights require an end time."})
+
+    def __str__(self):
+        return f"{self.product.name}: {self.text}"
+
+
 class ProductRelatedProduct(models.Model):
     """An ordered, directed related-product choice made by a merchant."""
 
