@@ -911,17 +911,18 @@ class OrderItem(models.Model):
     
 class HeroBanner(models.Model):
 
-    subtitle = models.CharField(max_length=100)
+    subtitle = models.CharField(max_length=100, blank=True)
 
-    title = models.CharField(max_length=200)
+    title = models.CharField(max_length=200, blank=True)
 
-    description = models.TextField()
+    description = models.TextField(blank=True)
 
     image = models.ImageField(upload_to="hero_banners/")
 
     button_text = models.CharField(
         max_length=50,
-        default="Explore Collection"
+        default="Explore Collection",
+        blank=True
     )
 
     display_order = models.PositiveIntegerField(default=1)
