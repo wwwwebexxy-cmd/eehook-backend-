@@ -784,6 +784,13 @@ class Order(models.Model):
         ("Refunded", "Refunded"),
     )
 
+    PAYMENT_METHOD_CHOICES = (
+        ("Cashfree", "Cashfree"),
+        ("Stripe", "Stripe"),
+        ("COD", "Cash on Delivery"),
+        ("WHATSAPP", "WhatsApp"),
+    )
+
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE
@@ -823,6 +830,12 @@ class Order(models.Model):
         max_length=20,
         choices=PAYMENT_STATUS_CHOICES,
         default="Pending"
+    )
+
+    payment_method = models.CharField(
+        max_length=20,
+        choices=PAYMENT_METHOD_CHOICES,
+        default="Cashfree",
     )
 
     stripe_session_id = models.CharField(

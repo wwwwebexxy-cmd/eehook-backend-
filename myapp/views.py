@@ -1798,14 +1798,12 @@ from .order_notifications import send_order_notifications
 @transaction.atomic
 def place_order(request):
 
-    # Stripe is the only supported checkout path. The previous direct endpoint
-    # created unpaid orders and deducted stock, allowing stock exhaustion.
-    return Response(
-        {
-            "detail": "Direct order placement is disabled. Create a Stripe checkout session instead."
-        },
-        status=status.HTTP_410_GONE,
-    )
+    payment_method = str(request.data.get("payment_method") or "").strip().upper()
+    if payment_method not in {"COD", "WHATSAPP"}:
+        return Response(
+            {"message": "Choose Cash on Delivery or WhatsApp."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     address_id = request.data.get(
         "address"
@@ -1963,6 +1961,8 @@ def place_order(request):
 
         payment_status="Pending",
 
+        payment_method=payment_method,
+
         status="Pending"
     )
     
@@ -2060,6 +2060,9 @@ def place_order(request):
 
             "payment_status":
             order.payment_status,
+
+            "payment_method":
+            order.payment_method,
 
             "status":
             order.status

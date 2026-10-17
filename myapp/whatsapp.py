@@ -57,7 +57,8 @@ def send_owner_order_notification(order_id):
         f"Customer: {customer_name}\n"
         f"Phone: {address.phone if address else 'N/A'}\n"
         f"Items:\n{'\n'.join(item_lines)}\n"
-        f"Total: {order.total_amount}"
+        f"Total: {order.total_amount}\n"
+        f"Payment method: {order.get_payment_method_display()}"
     )
 
     api_version = getattr(settings, "WHATSAPP_API_VERSION", "v22.0")

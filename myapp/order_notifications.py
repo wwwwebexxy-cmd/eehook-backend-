@@ -97,6 +97,7 @@ def send_owner_order_email(order_id):
             *(item_lines or ["- No items recorded"]),
             "",
             f"Total: {order.total_amount}",
+            f"Payment method: {order.get_payment_method_display()}",
             f"Payment: {order.payment_status}",
             f"Status: {order.status}",
             "",
@@ -128,6 +129,7 @@ def send_owner_order_email(order_id):
         <tbody>{''.join(item_rows) or '<tr><td colspan=\"3\">No items recorded</td></tr>'}</tbody>
       </table>
       <p><strong>Total:</strong> {safe_total}<br>
+         <strong>Payment method:</strong> {escape(order.get_payment_method_display())}<br>
          <strong>Payment:</strong> {safe_payment_status}<br>
          <strong>Status:</strong> {safe_status}</p>
       <p>

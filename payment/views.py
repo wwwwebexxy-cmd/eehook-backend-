@@ -388,6 +388,7 @@ def refund_unfulfillable_checkout(session, error):
                 shipping_charge=Decimal("0.00"),
                 total_amount=total,
                 payment_status="Refunded",
+                payment_method="Stripe",
                 status="Cancelled",
                 stripe_session_id=session.id,
             )
@@ -819,6 +820,8 @@ def fulfill_paid_order(session):
         total_amount=expected_total,
 
         payment_status="Paid",
+
+        payment_method="Stripe",
 
         status="Processing",
 

@@ -200,6 +200,12 @@ def _checkout_response(checkout):
 @permission_classes([IsAuthenticated])
 @throttle_classes([PaymentRateThrottle])
 def create_cashfree_order(request):
+    if not getattr(settings, "CASHFREE_ENABLED", False):
+        return Response(
+            {"message": "Online payments are temporarily unavailable."},
+            status=status.HTTP_410_GONE,
+        )
+
     address_id = request.data.get("address")
     if not address_id:
         return Response({"message": "Address is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -458,6 +464,7 @@ def fulfill_cashfree_checkout(checkout):
         shipping_charge=_snapshot_decimal(snapshot, "shipping_charge"),
         total_amount=expected_total,
         payment_status="Paid",
+        payment_method="Cashfree",
         status="Processing",
     )
 

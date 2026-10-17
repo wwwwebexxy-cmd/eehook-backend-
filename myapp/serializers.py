@@ -979,6 +979,8 @@ class AdminOrderSerializer(
 
             "payment_status",
 
+            "payment_method",
+
             "status",
 
             "created_at"
