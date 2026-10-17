@@ -1606,6 +1606,80 @@ class ProductWorkflowRegressionTests(TestCase):
             ProductImage.objects.filter(variant=variant, is_primary=True).count(), 1
         )
 
+    def test_product_duplicate_copies_media_and_preserves_selected_primary(self):
+        source = self.create_product("Copyable Product")
+        source.key_features = "Fast charging\nTwo-year warranty"
+        source.promotional_banner_image = self.image_file("banner.jpg", (8, 9, 10))
+        source.save()
+        source_variant = self.create_variant(
+            source,
+            color=self.black.id,
+            price="25.00",
+            stock=7,
+            sku="COPY-SOURCE-SKU",
+        )
+        ProductVariantUnit.objects.create(
+            variant=source_variant,
+            unit_type=self.storage,
+            unit=self.gb,
+            price="30.00",
+            stock=4,
+            sku="COPY-SOURCE-UNIT-SKU",
+        )
+        first = self.client.post(
+            "/admin/manage/product-images/",
+            {
+                "variant": source_variant.id,
+                "image": self.image_file("copy-first.jpg", (11, 12, 13)),
+                "position": 0,
+                "is_primary": False,
+            },
+            format="multipart",
+        )
+        second = self.client.post(
+            "/admin/manage/product-images/",
+            {
+                "variant": source_variant.id,
+                "image": self.image_file("copy-second.jpg", (14, 15, 16)),
+                "position": 1,
+                "is_primary": True,
+            },
+            format="multipart",
+        )
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(second.status_code, 201, second.data)
+
+        response = self.client.post(
+            f"/admin/manage/products/{source.id}/duplicate/"
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        duplicate = Product.objects.get(pk=response.data["id"])
+        self.assertEqual(duplicate.name, "Copyable Product (Copy)")
+        self.assertEqual(duplicate.key_features, source.key_features)
+        self.assertTrue(duplicate.promotional_banner_image.name)
+
+        duplicate_variant = ProductVariant.objects.get(product=duplicate)
+        self.assertEqual(duplicate_variant.color_id, source_variant.color_id)
+        self.assertEqual(duplicate_variant.price, source_variant.price)
+        self.assertEqual(duplicate_variant.stock, source_variant.stock)
+        self.assertEqual(duplicate_variant.sizes.count(), 1)
+        duplicate_images = list(duplicate_variant.images.order_by("position"))
+        self.assertEqual(len(duplicate_images), 2)
+        self.assertEqual(
+            duplicate_variant.images.get(is_primary=True).position,
+            1,
+        )
+        self.assertNotEqual(duplicate_images[0].image.name, source_variant.images.first().image.name)
+
+        set_primary = self.client.post(
+            f"/admin/manage/product-images/{duplicate_images[0].id}/set-primary/"
+        )
+        self.assertEqual(set_primary.status_code, 200, set_primary.data)
+        self.assertEqual(
+            duplicate_variant.images.get(is_primary=True).id,
+            duplicate_images[0].id,
+        )
+
     def test_public_sorting_and_pagination_use_catalog_prices(self):
         low = self.create_product("Low price")
         self.create_variant(low, price="10.00", stock=1)

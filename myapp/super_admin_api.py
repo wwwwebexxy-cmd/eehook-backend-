@@ -6,11 +6,15 @@ including multipart uploads and the nested Product records used by the admin
 inlines.
 """
 
+import os
+
+from django.core.files.base import ContentFile
 from django.db.models.fields import NOT_PROVIDED
 from django.db import transaction
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import filters, serializers, viewsets
+from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -573,6 +577,112 @@ class AdminProductViewSet(AdminModelViewSet):
     )
     ordering = ("-created_at",)
 
+    @action(detail=True, methods=("post",), url_path="duplicate")
+    def duplicate(self, request, pk=None):
+        """Duplicate a product and all of its catalog media on the server.
+
+        Image files are copied through Django's configured storage instead of
+        being downloaded by the browser.  This keeps duplication working with
+        local media, S3-compatible storage, and deployments where media URLs
+        are not readable from the dashboard origin.
+        """
+        source = self.get_object()
+        with transaction.atomic():
+            duplicate = Product(
+                category=source.category,
+                subcategory=source.subcategory,
+                brand=source.brand,
+                offer=source.offer,
+                name=f"{source.name} (Copy)",
+                description=source.description,
+                is_active=source.is_active,
+                key_features=source.key_features,
+                shipping_fee=source.shipping_fee,
+                estimated_delivery_time=source.estimated_delivery_time,
+                seller_name=source.seller_name,
+                warranty_info=source.warranty_info,
+                current_viewers_count=0,
+                promotional_banner_link=source.promotional_banner_link,
+                related_product_mode=Product.RELATED_PRODUCT_MODE_NONE,
+            )
+            duplicate.full_clean()
+            duplicate.save()
+
+            if source.promotional_banner_image:
+                _copy_stored_file(
+                    source.promotional_banner_image,
+                    duplicate.promotional_banner_image,
+                    f"duplicate-{duplicate.pk}-banner",
+                )
+                duplicate.save(update_fields=("promotional_banner_image",))
+
+            source_variants = source.variants.prefetch_related(
+                "regions", "sizes", "images"
+            ).order_by("id")
+            for source_variant in source_variants:
+                variant = ProductVariant.objects.create(
+                    product=duplicate,
+                    color=source_variant.color,
+                    price_type=source_variant.price_type,
+                    price=source_variant.price,
+                    stock=source_variant.stock,
+                )
+                variant.regions.set(source_variant.regions.all())
+
+                for source_unit in source_variant.sizes.all():
+                    # Variant and unit SKUs are unique.  A duplicate gets new
+                    # catalog records, so retaining those identifiers would
+                    # make the otherwise valid copy fail on uniqueness.
+                    ProductVariantUnit.objects.create(
+                        variant=variant,
+                        unit_type=source_unit.unit_type,
+                        unit=source_unit.unit,
+                        price=source_unit.price,
+                        stock=source_unit.stock,
+                    )
+
+                copied_images = []
+                source_primary_image = None
+                source_images = list(source_variant.images.all())
+                for source_image in source_images:
+                    if not source_image.image:
+                        continue
+                    image = ProductImage(
+                        variant=variant,
+                        position=source_image.position,
+                        is_primary=False,
+                    )
+                    _copy_stored_file(
+                        source_image.image,
+                        image.image,
+                        f"duplicate-{duplicate.pk}-image-{source_image.pk}",
+                    )
+                    image.save()
+                    copied_images.append(image)
+                    if source_image.is_primary:
+                        source_primary_image = image
+
+                if copied_images:
+                    primary_image = source_primary_image or copied_images[0]
+                    primary_image.is_primary = True
+                    primary_image.save(update_fields=("is_primary",))
+
+            self._audit("duplicate", duplicate, f"Duplicated product {source.pk}.")
+
+        return Response(self.get_serializer(duplicate).data, status=201)
+
+
+def _copy_stored_file(source_field, target_field, prefix):
+    """Copy a configured-storage file into another model field."""
+    source_field.open("rb")
+    try:
+        content = source_field.read()
+    finally:
+        source_field.close()
+    original_name = os.path.basename(source_field.name)
+    target_name = f"{prefix}-{original_name}"
+    target_field.save(target_name, ContentFile(content), save=False)
+
 
 class AdminProductHighlightSerializer(serializers.ModelSerializer):
     class Meta:
@@ -716,6 +826,19 @@ class AdminProductImageViewSet(AdminModelViewSet):
         return queryset
 
     serializer_class = AdminProductImageSerializer
+
+    @action(detail=True, methods=("post",), url_path="set-primary")
+    def set_primary(self, request, pk=None):
+        """Make exactly this image primary for its variant."""
+        image = self.get_object()
+        with transaction.atomic():
+            locked_image = ProductImage.objects.select_for_update().get(pk=image.pk)
+            ProductImage.objects.filter(variant_id=locked_image.variant_id).update(
+                is_primary=False
+            )
+            ProductImage.objects.filter(pk=locked_image.pk).update(is_primary=True)
+            locked_image.refresh_from_db()
+        return Response(self.get_serializer(locked_image).data)
 
 
 class AdminWishlistViewSet(AdminModelViewSet):
