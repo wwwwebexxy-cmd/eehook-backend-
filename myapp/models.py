@@ -292,6 +292,17 @@ class ProductHighlight(models.Model):
         ),
         help_text="The message chip background color, for example #EAF4FF.",
     )
+    text_color = models.CharField(
+        max_length=7,
+        default="#173B35",
+        validators=(
+            RegexValidator(
+                regex=r"^#[0-9A-Fa-f]{6}$",
+                message="Use a 6-digit hex color such as #173B35.",
+            ),
+        ),
+        help_text="The tag text color, for example #FFFFFF.",
+    )
     ends_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -361,6 +372,17 @@ class ProductMessage(models.Model):
             ),
         ),
         help_text="The message background color, for example #EAF4FF.",
+    )
+    text_color = models.CharField(
+        max_length=7,
+        default="#173B35",
+        validators=(
+            RegexValidator(
+                regex=r"^#[0-9A-Fa-f]{6}$",
+                message="Use a 6-digit hex color such as #173B35.",
+            ),
+        ),
+        help_text="The message text color, for example #173B35.",
     )
     ends_at = models.DateTimeField(
         null=True,

@@ -1836,6 +1836,8 @@ class HomepageDiscoveryTests(TestCase):
             highlight_type=ProductHighlight.MESSAGE,
             text="LOWEST PRICE",
             icon_key="tag",
+            background_color="#173B35",
+            text_color="#FFFFFF",
             display_order=0,
         )
         ProductHighlight.objects.create(
@@ -1855,6 +1857,14 @@ class HomepageDiscoveryTests(TestCase):
         self.assertEqual(
             homepage_product["marketing_highlights"][0]["text"],
             "LOWEST PRICE",
+        )
+        self.assertEqual(
+            homepage_product["marketing_highlights"][0]["background_color"],
+            "#173B35",
+        )
+        self.assertEqual(
+            homepage_product["marketing_highlights"][0]["text_color"],
+            "#FFFFFF",
         )
         self.assertEqual(len(homepage_product["marketing_highlights"]), 1)
 
