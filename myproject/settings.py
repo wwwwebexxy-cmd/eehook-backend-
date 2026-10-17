@@ -378,7 +378,7 @@ CASHFREE_ENABLED = os.getenv("CASHFREE_ENABLED", "false").strip().lower() in {"1
 CASHFREE_ENV = os.getenv("CASHFREE_ENV", "sandbox").strip().lower()
 CASHFREE_CLIENT_ID = os.getenv("CASHFREE_CLIENT_ID", "").strip()
 CASHFREE_CLIENT_SECRET = os.getenv("CASHFREE_CLIENT_SECRET", "").strip()
-CASHFREE_ORDER_CURRENCY = os.getenv("CASHFREE_ORDER_CURRENCY", "INR").strip().upper()
+CASHFREE_ORDER_CURRENCY = os.getenv("CASHFREE_ORDER_CURRENCY", "AED").strip().upper()
 CASHFREE_WEBHOOK_URL = os.getenv("CASHFREE_WEBHOOK_URL", "").strip()
 
 # Legacy Stripe settings remain available for historical checkout records.
