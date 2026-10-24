@@ -81,8 +81,13 @@ from .welcome_bonus import (
     redeem_welcome_bonus_assignment,
     welcome_bonus_validation_error,
 )
+from .invoice import render_tax_invoice
 
 logger = logging.getLogger(__name__)
+
+
+def _invoice_filename(order):
+    return f"EHK26-{order.pk:04d}-tax-invoice.pdf"
 
 
 class PublicProductPagination(PageNumberPagination):
@@ -2496,6 +2501,38 @@ def my_orders(request):
     return Response(
         serializer.data
     )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def my_order_invoice(request, id):
+    order, error = _owned_object_or_error(Order, id, request.user, label="Order")
+    if error:
+        return error
+    if order.payment_status != "Paid":
+        return Response(
+            {"message": "The invoice is available after payment is completed."},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    order = (
+        Order.objects.select_related("user", "address")
+        .prefetch_related(
+            "items__product__variants",
+            "items__product",
+            "items__color",
+            "items__unit__unit_type",
+            "items__variant_unit__unit",
+            "items__variant_unit__unit_type",
+            "items__variant_unit__variant",
+        )
+        .get(pk=order.pk)
+    )
+    response = HttpResponse(render_tax_invoice(order), content_type="application/pdf")
+    response["Content-Disposition"] = (
+        f'attachment; filename="{_invoice_filename(order)}"'
+    )
+    return response
 
 
 @api_view(["PATCH"])

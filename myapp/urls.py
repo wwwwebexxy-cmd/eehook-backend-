@@ -39,6 +39,7 @@ urlpatterns = [
     path("search-products/", views.search_products),
     path("place-order/", views.place_order),
     path("my-orders/",views.my_orders),
+    path("my-orders/<int:id>/invoice/", views.my_order_invoice),
     path("cancel-order/<int:id>/",views.cancel_order),
     path( "order-details/<int:id>/",views.order_details),
     path(
@@ -124,6 +125,7 @@ from rest_framework.routers import DefaultRouter
 from .order_admin_api import (
     SuperAdminOrderDetailView,
     SuperAdminOrderListView,
+    SuperAdminOrderInvoiceView,
     SuperAdminOrderPackageLabelView,
 )
 from .super_admin_api import (
@@ -208,5 +210,10 @@ urlpatterns += [
         "orders/<int:id>/package-label/",
         SuperAdminOrderPackageLabelView.as_view(),
         name="admin-order-package-label-api",
+    ),
+    path(
+        "orders/<int:id>/invoice/",
+        SuperAdminOrderInvoiceView.as_view(),
+        name="admin-order-invoice-api",
     ),
 ]

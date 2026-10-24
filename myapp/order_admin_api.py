@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from .models import AdminAuditLog, Order
 from .permissions import IsSuperAdmin
 from .package_label import render_package_label
+from .invoice import render_tax_invoice
 from .serializers import OrderSerializer
 
 
@@ -178,5 +179,36 @@ class SuperAdminOrderPackageLabelView(APIView):
         response = HttpResponse(render_package_label(order), content_type="application/pdf")
         response["Content-Disposition"] = (
             f'attachment; filename="EHK26-{order.pk:04d}-package-label.pdf"'
+        )
+        return response
+
+
+class SuperAdminOrderInvoiceView(APIView):
+    """Download the tax invoice for a paid order."""
+
+    permission_classes = (IsSuperAdmin,)
+
+    def get(self, request, id):
+        order = get_object_or_404(
+            Order.objects.select_related("user", "address")
+            .prefetch_related(
+                "items__product__variants",
+                "items__product",
+                "items__color",
+                "items__unit__unit_type",
+                "items__variant_unit__unit",
+                "items__variant_unit__unit_type",
+                "items__variant_unit__variant",
+            ),
+            pk=id,
+        )
+        if order.payment_status != "Paid":
+            return Response(
+                {"message": "The invoice is available after payment is completed."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        response = HttpResponse(render_tax_invoice(order), content_type="application/pdf")
+        response["Content-Disposition"] = (
+            f'attachment; filename="EHK26-{order.pk:04d}-tax-invoice.pdf"'
         )
         return response
