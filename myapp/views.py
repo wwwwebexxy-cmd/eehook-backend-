@@ -73,7 +73,7 @@ from .utils import (
     calculate_cart_shipping,
     calculate_order_total,
 )
-from .auth_cookies import clear_auth_cookies, set_auth_cookies
+from .auth_cookies import auth_cookie_names, clear_auth_cookies, normalize_auth_scope, set_auth_cookies
 from .authentication import enforce_csrf
 from .welcome_bonus import (
     calculate_welcome_bonus_price,
@@ -138,9 +138,9 @@ class ThrottledTokenRefreshView(TokenRefreshView):
 
     def post(self, request, *args, **kwargs):
         """Rotate the refresh cookie without exposing tokens in JSON."""
-        refresh_token = request.data.get("refresh") or request.COOKIES.get(
-            settings.JWT_REFRESH_COOKIE_NAME
-        )
+        scope = normalize_auth_scope(request.data.get("scope"))
+        _, refresh_cookie = auth_cookie_names(scope)
+        refresh_token = request.data.get("refresh") or request.COOKIES.get(refresh_cookie)
         if not refresh_token:
             return Response(
                 {"detail": "Refresh token is required."},
@@ -149,7 +149,7 @@ class ThrottledTokenRefreshView(TokenRefreshView):
 
         # A refresh cookie is ambient browser credentials, so require CSRF even
         # when the access cookie has expired and DRF cannot authenticate it.
-        if request.COOKIES.get(settings.JWT_REFRESH_COOKIE_NAME):
+        if request.COOKIES.get(refresh_cookie):
             enforce_csrf(request)
 
         serializer = self.get_serializer(data={"refresh": refresh_token})
@@ -160,6 +160,7 @@ class ThrottledTokenRefreshView(TokenRefreshView):
             response,
             access_token=refreshed["access"],
             refresh_token=refreshed.get("refresh", refresh_token),
+            scope=scope,
         )
 
 
@@ -290,6 +291,7 @@ def google_login(request):
             response,
             access_token=str(refresh.access_token),
             refresh_token=str(refresh),
+            scope="admin" if login_type == "super_admin" else "customer",
         )
 
     except (GoogleAuthError, ValueError):
@@ -365,6 +367,7 @@ def login(request):
         response,
         access_token=str(refresh.access_token),
         refresh_token=str(refresh),
+        scope="admin" if login_type == "super_admin" else "customer",
     )
 
 
@@ -372,10 +375,19 @@ def login(request):
 @permission_classes([AllowAny])
 def logout(request):
     """Revoke a refresh token and expire both cookies in every case."""
-    refresh = request.data.get("refresh") or request.COOKIES.get(
-        settings.JWT_REFRESH_COOKIE_NAME
+    requested_scope = request.data.get("scope")
+    scope = normalize_auth_scope(requested_scope) if requested_scope else None
+    cookie_scopes = (scope,) if scope else ("customer", "admin")
+    refresh_cookie_names = [auth_cookie_names(current_scope)[1] for current_scope in cookie_scopes]
+    refresh = request.data.get("refresh") or next(
+        (
+            request.COOKIES.get(cookie_name)
+            for cookie_name in refresh_cookie_names
+            if request.COOKIES.get(cookie_name)
+        ),
+        None,
     )
-    if request.COOKIES.get(settings.JWT_REFRESH_COOKIE_NAME):
+    if any(request.COOKIES.get(cookie_name) for cookie_name in refresh_cookie_names):
         enforce_csrf(request)
     if refresh:
         try:
@@ -388,7 +400,7 @@ def logout(request):
         {"message": "Logged out successfully."},
         status=status.HTTP_200_OK,
     )
-    return clear_auth_cookies(response)
+    return clear_auth_cookies(response, scope=scope)
 
 
 @api_view(["POST"])

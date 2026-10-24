@@ -618,6 +618,58 @@ class CookieAuthenticationSecurityTests(TestCase):
         response = self.client.get("/admin/manage/categories/")
         self.assertEqual(response.status_code, 200, response.data)
 
+    def test_admin_and_customer_browser_sessions_are_isolated(self):
+        admin = User.objects.create_superuser(
+            email="isolated-super-admin@example.invalid",
+            password="IsolatedAdminPass123!",
+        )
+        customer_client = APIClient(enforce_csrf_checks=True)
+        admin_client = APIClient(enforce_csrf_checks=True)
+
+        customer_login = customer_client.post(
+            "/login/",
+            {
+                "email": self.user.email,
+                "password": "CookiePass123!",
+                "login_type": "customer",
+            },
+            format="json",
+        )
+        admin_login = admin_client.post(
+            "/login/",
+            {
+                "email": admin.email,
+                "password": "IsolatedAdminPass123!",
+                "login_type": "super_admin",
+            },
+            format="json",
+        )
+
+        self.assertEqual(customer_login.status_code, 200, customer_login.data)
+        self.assertEqual(admin_login.status_code, 200, admin_login.data)
+        self.assertIn(settings.JWT_ACCESS_COOKIE_NAME, customer_login.cookies)
+        self.assertIn(settings.JWT_ADMIN_ACCESS_COOKIE_NAME, admin_login.cookies)
+        self.assertNotIn(settings.JWT_ADMIN_ACCESS_COOKIE_NAME, customer_login.cookies)
+        self.assertNotIn(settings.JWT_ACCESS_COOKIE_NAME, admin_login.cookies)
+
+        customer_session = customer_client.get("/auth/session/?scope=customer")
+        admin_session = admin_client.get("/auth/session/?scope=admin")
+        self.assertEqual(customer_session.data["user"]["id"], self.user.id)
+        self.assertEqual(admin_session.data["user"]["id"], admin.id)
+        self.assertIn(customer_client.get("/admin/manage/categories/").status_code, (401, 403))
+        self.assertEqual(admin_client.get("/admin/manage/categories/").status_code, 200)
+
+        customer_csrf = customer_client.get("/auth/csrf/").cookies[settings.CSRF_COOKIE_NAME].value
+        logout = customer_client.post(
+            "/logout/",
+            {"scope": "customer"},
+            format="json",
+            HTTP_X_CSRFTOKEN=customer_csrf,
+        )
+        self.assertEqual(logout.status_code, 200)
+        self.assertEqual(customer_client.get("/auth/session/?scope=customer").status_code, 401)
+        self.assertEqual(admin_client.get("/auth/session/?scope=admin").status_code, 200)
+
     @patch("myapp.views.id_token.verify_oauth2_token")
     def test_google_login_uses_the_same_cookie_only_contract(self, verify_token):
         verify_token.return_value = {

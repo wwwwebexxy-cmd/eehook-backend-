@@ -1,12 +1,31 @@
 """DRF authentication for HttpOnly JWT cookies with CSRF protection."""
 
-from django.conf import settings
 from rest_framework.authentication import CSRFCheck
 from rest_framework.exceptions import PermissionDenied
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
+from .auth_cookies import auth_cookie_names, normalize_auth_scope
+
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
+ADMIN_PATH_PREFIXES = (
+    "/admin/manage/",
+    "/orders/",
+    "/admin-orders/",
+    "/admin-order-details/",
+    "/admin-dashboard-cards/",
+    "/update-order-status/",
+    "/low-stock-products/",
+    "/export-orders-csv/",
+)
+
+
+def request_auth_scope(request):
+    requested_scope = request.query_params.get("scope")
+    if requested_scope:
+        return normalize_auth_scope(requested_scope)
+    path = request.path.lower()
+    return "admin" if path.startswith(ADMIN_PATH_PREFIXES) else "customer"
 
 
 def enforce_csrf(request):
@@ -32,7 +51,8 @@ class CookieJWTAuthentication(JWTAuthentication):
         # cannot downgrade an otherwise valid Super Admin cookie session.
         # Explicit bearer authentication remains available for non-browser
         # clients that do not send the browser cookie.
-        raw_token = request.COOKIES.get(settings.JWT_ACCESS_COOKIE_NAME)
+        access_cookie, _ = auth_cookie_names(request_auth_scope(request))
+        raw_token = request.COOKIES.get(access_cookie)
         if raw_token:
             if request.method.upper() not in SAFE_METHODS:
                 enforce_csrf(request)
