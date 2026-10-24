@@ -746,6 +746,11 @@ class OrderItemSerializer(
     serializers.ModelSerializer
 ):
 
+    product = serializers.IntegerField(
+        source="product.id",
+        read_only=True
+    )
+
     product_name = serializers.CharField(
         source="product.name",
         read_only=True
@@ -775,6 +780,8 @@ class OrderItemSerializer(
         fields = [
 
             "id",
+
+            "product",
 
             "product_name",
 
