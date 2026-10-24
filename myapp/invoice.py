@@ -3,11 +3,13 @@
 from decimal import Decimal, ROUND_HALF_UP
 from html import escape
 from io import BytesIO
+from pathlib import Path
 
 from django.conf import settings
 from django.utils.timezone import localtime
 from reportlab.lib.colors import HexColor, black, white
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.lib.utils import ImageReader
 from reportlab.lib.pagesizes import portrait
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
@@ -23,6 +25,7 @@ ORANGE = HexColor("#ff9000")
 SLATE = HexColor("#4f6973")
 LIGHT_ORANGE = HexColor("#fff4e5")
 TABLE_LINE = HexColor("#222222")
+EEHOOK_LOGO_PATH = Path(__file__).with_name("assets") / "eehook-package-logo.png"
 MARGIN = 48
 CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2
 
@@ -76,6 +79,43 @@ def _address_lines(address):
 
 
 def _draw_logo(pdf, x, y, scale=1):
+    if EEHOOK_LOGO_PATH.is_file():
+        image = ImageReader(str(EEHOOK_LOGO_PATH))
+        image_width, image_height = image.getSize()
+        # The supplied logo is placed on a white canvas. Crop that whitespace
+        # at render time so the invoice gets the actual mark, not a tiny logo
+        # surrounded by the source image margins.
+        crop_left, crop_top, crop_right, crop_bottom = 28, 36, 250, 125
+        crop_width = crop_right - crop_left
+        crop_height = crop_bottom - crop_top
+        box_width = 78 * scale
+        box_height = 70 * scale
+        crop_scale = min(box_width / crop_width, box_height / crop_height)
+        draw_width = image_width * crop_scale
+        draw_height = image_height * crop_scale
+        crop_draw_width = crop_width * crop_scale
+        crop_draw_height = crop_height * crop_scale
+        draw_x = x + (box_width - crop_draw_width) / 2 - crop_left * crop_scale
+        draw_y = y + (box_height - crop_draw_height) / 2 - (image_height - crop_bottom) * crop_scale
+
+        pdf.saveState()
+        clip = pdf.beginPath()
+        clip.rect(x, y, box_width, box_height)
+        pdf.clipPath(clip, stroke=0, fill=0)
+        pdf.drawImage(
+            image,
+            draw_x,
+            draw_y,
+            width=draw_width,
+            height=draw_height,
+            preserveAspectRatio=False,
+            mask="auto",
+        )
+        pdf.restoreState()
+        return
+
+    # Keep the vector fallback for older deployments where the bundled asset
+    # has not been installed yet.
     pdf.saveState()
     pdf.setFillColor(ORANGE)
     pdf.rect(x + 27 * scale, y + 47 * scale, 25 * scale, 25 * scale, fill=1, stroke=0)
