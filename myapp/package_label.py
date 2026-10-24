@@ -6,10 +6,12 @@ dash instead of being guessed.
 """
 
 from io import BytesIO
+from pathlib import Path
 
 from reportlab.graphics.barcode import code128
 from reportlab.lib.colors import HexColor, black, white
 from reportlab.lib.pagesizes import A6, landscape
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 
@@ -17,6 +19,7 @@ from reportlab.pdfgen import canvas
 PAGE_WIDTH, BASE_PAGE_HEIGHT = landscape(A6)
 ORANGE = HexColor("#ff9000")
 INK = HexColor("#111111")
+PACKAGE_LOGO_PATH = Path(__file__).with_name("assets") / "eehook-package-logo.png"
 
 
 def _clean(value, fallback="—"):
@@ -136,7 +139,26 @@ def _draw_field(pdf, label, value, x, y, value_x, value_width):
     return max(13, len(lines) * 10)
 
 
-def _draw_logo(pdf, x, y):
+def _draw_logo(pdf, x, y, width=72, height=62):
+    if PACKAGE_LOGO_PATH.is_file():
+        image = ImageReader(str(PACKAGE_LOGO_PATH))
+        image_width, image_height = image.getSize()
+        scale = min(width / image_width, height / image_height)
+        draw_width = image_width * scale
+        draw_height = image_height * scale
+        pdf.drawImage(
+            image,
+            x + (width - draw_width) / 2,
+            y + (height - draw_height) / 2,
+            width=draw_width,
+            height=draw_height,
+            preserveAspectRatio=True,
+            mask="auto",
+        )
+        return
+
+    # Keep a small fallback for environments where the bundled image is not
+    # present yet (for example, an older deployment during a rolling update).
     pdf.setFillColor(ORANGE)
     pdf.rect(x + 27, y + 47, 25, 25, fill=1, stroke=0)
     pdf.rect(x + 15, y + 55, 17, 7, fill=1, stroke=0)
@@ -237,11 +259,14 @@ def render_package_label(order):
     pdf.setLineWidth(2)
     pdf.rect(margin, margin, PAGE_WIDTH - margin * 2, page_height - margin * 2, fill=1, stroke=1)
 
-    # Header: logo, Ship To, Ship From.
-    pdf.line(90, top_bottom, 90, top)
-    pdf.line(250, top_bottom, 250, top)
-    _draw_logo(pdf, 12, top_bottom + 8)
-    x = 100
+    # Header: keep the three columns on a consistent grid so the logo and
+    # customer/sender details remain aligned on every generated strip.
+    logo_column_right = 90
+    ship_to_column_right = 250
+    pdf.line(logo_column_right, top_bottom, logo_column_right, top)
+    pdf.line(ship_to_column_right, top_bottom, ship_to_column_right, top)
+    _draw_logo(pdf, 12, top_bottom + 8, width=70, height=70)
+    x = logo_column_right + 10
     y = _draw_section_header(pdf, "SHIP TO", x, top - 17, 140)
     pdf.setFont("Helvetica-Bold", 10.5)
     pdf.setFillColor(INK)
@@ -255,8 +280,8 @@ def render_package_label(order):
     y -= 12
     pdf.drawString(x, y, _truncate(email, 29))
 
-    x = 260
-    y = _draw_section_header(pdf, "SHIP FROM", x, top - 17, 145)
+    x = ship_to_column_right + 10
+    y = _draw_section_header(pdf, "SHIP FROM", x, top - 17, 140)
     pdf.setFont("Helvetica", 8.5)
     for line in ("EEHOOK", "(Dexon Advertising LLC)", "Warehouse 9", "Al Qusais 5", "Dubai UAE"):
         pdf.drawString(x, y, line)
@@ -273,14 +298,16 @@ def render_package_label(order):
     pdf.setFont("Helvetica-Bold", 10)
     pdf.drawCentredString(335, barcode_bottom + 13, _truncate(city, 22))
 
-    # Lower half: package information and item-level barcode references.
-    pdf.line(170, lower_bottom, 170, barcode_bottom)
+    # Lower half: two compact columns with fixed boundaries. Values wrap
+    # inside the left column instead of crossing into the item column.
+    lower_column_right = 170
+    pdf.line(lower_column_right, lower_bottom, lower_column_right, barcode_bottom)
     y = _draw_section_header(pdf, "PACKAGE INFORMATION", 18, barcode_bottom - 16, 140)
     value_x = 76
     for label, value in package_info.items():
         y -= _draw_field(pdf, label, value, 18, y, value_x, package_info_value_width)
 
-    x = 182
+    x = lower_column_right + 12
     y = _draw_section_header(pdf, "SPECIAL INSTRUCTIONS", x, barcode_bottom - 16, 220)
     discount = float(order.discount_amount or 0)
     offer_text = "SPECIAL OFFER" if discount > 0 else "STANDARD DELIVERY"
