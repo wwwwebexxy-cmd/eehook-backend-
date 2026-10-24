@@ -121,7 +121,11 @@ path(
 ]
 
 from rest_framework.routers import DefaultRouter
-from .order_admin_api import SuperAdminOrderDetailView, SuperAdminOrderListView
+from .order_admin_api import (
+    SuperAdminOrderDetailView,
+    SuperAdminOrderListView,
+    SuperAdminOrderPackageLabelView,
+)
 from .super_admin_api import (
     AdminAddressViewSet,
     AdminBrandViewSet,
@@ -199,5 +203,10 @@ urlpatterns += [
         "orders/<int:id>/",
         SuperAdminOrderDetailView.as_view(),
         name="admin-order-detail-api",
+    ),
+    path(
+        "orders/<int:id>/package-label/",
+        SuperAdminOrderPackageLabelView.as_view(),
+        name="admin-order-package-label-api",
     ),
 ]

@@ -14,6 +14,7 @@ gunicorn==26.0.0
 idna==3.18
 packaging==26.2
 pillow==12.3.0
+reportlab>=4.2,<5
 pyasn1==0.6.4
 pyasn1_modules==0.4.2
 pycparser==3.0

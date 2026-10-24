@@ -2480,3 +2480,76 @@ class WelcomeBonusFlowTests(TestCase):
         )
         self.assertEqual(toggled.status_code, 200, toggled.data)
         self.assertFalse(toggled.data["is_active"])
+
+
+@override_settings(SECURE_SSL_REDIRECT=False)
+class OrderPackageLabelTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_superuser(
+            email="package-label-admin@example.invalid",
+            password="PackageLabelPass123!",
+        )
+        self.customer = User.objects.create_user(
+            email="package-label-customer@example.invalid",
+            password="PackageLabelPass123!",
+            first_name="Sadiqu",
+            last_name="Hassan",
+        )
+        category = Category.objects.create(name="Label category", image="label-category.jpg")
+        subcategory = SubCategory.objects.create(
+            category=category, name="Label subcategory"
+        )
+        self.product = Product.objects.create(
+            category=category,
+            subcategory=subcategory,
+            name="Label product",
+            description="Product used by the package label test.",
+        )
+        address = Address.objects.create(
+            user=self.customer,
+            full_name="Sadiqu Hassan",
+            phone="+971547369369",
+            address_line="Deira",
+            city="Dubai",
+            postal_code="00000",
+            country="UAE",
+        )
+        self.order = Order.objects.create(
+            user=self.customer,
+            address=address,
+            subtotal=Decimal("100.00"),
+            shipping_charge=Decimal("0.00"),
+            total_amount=Decimal("100.00"),
+            payment_method="COD",
+            payment_status="Pending",
+            status="Pending",
+        )
+        OrderItem.objects.create(
+            order=self.order,
+            product=self.product,
+            quantity=1,
+            original_price=Decimal("100.00"),
+            price=Decimal("100.00"),
+            total_price=Decimal("100.00"),
+        )
+
+    def test_package_label_is_super_admin_only_and_returns_a_pdf(self):
+        self.assertEqual(
+            self.client.get(f"/orders/{self.order.id}/package-label/").status_code,
+            401,
+        )
+        self.client.force_authenticate(user=self.customer)
+        self.assertEqual(
+            self.client.get(f"/orders/{self.order.id}/package-label/").status_code,
+            403,
+        )
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.get(f"/orders/{self.order.id}/package-label/")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertIn(
+            f'EHK26-{self.order.id:04d}-package-label.pdf',
+            response["Content-Disposition"],
+        )
+        self.assertTrue(response.content.startswith(b"%PDF"))

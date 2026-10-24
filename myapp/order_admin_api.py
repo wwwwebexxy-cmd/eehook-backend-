@@ -1,11 +1,14 @@
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
+from django.http import HttpResponse
 from rest_framework import generics, serializers, status
+from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
 from .models import AdminAuditLog, Order
 from .permissions import IsSuperAdmin
+from .package_label import render_package_label
 from .serializers import OrderSerializer
 
 
@@ -152,3 +155,28 @@ class SuperAdminOrderDetailView(generics.RetrieveUpdateDestroyAPIView):
             {"message": "Order cancelled.", "order": self.get_serializer(order).data},
             status=status.HTTP_200_OK,
         )
+
+
+class SuperAdminOrderPackageLabelView(APIView):
+    """Download one package strip containing all products in an order."""
+
+    permission_classes = (IsSuperAdmin,)
+
+    def get(self, request, id):
+        order = get_object_or_404(
+            Order.objects.select_related("user", "address")
+            .prefetch_related(
+                "items__product",
+                "items__color",
+                "items__unit__unit_type",
+                "items__variant_unit__unit",
+                "items__variant_unit__unit_type",
+                "items__variant_unit__variant__regions",
+            ),
+            pk=id,
+        )
+        response = HttpResponse(render_package_label(order), content_type="application/pdf")
+        response["Content-Disposition"] = (
+            f'attachment; filename="EHK26-{order.pk:04d}-package-label.pdf"'
+        )
+        return response
