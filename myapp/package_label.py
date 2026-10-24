@@ -10,6 +10,7 @@ from io import BytesIO
 from reportlab.graphics.barcode import code128
 from reportlab.lib.colors import HexColor, black, white
 from reportlab.lib.pagesizes import A6, landscape
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 
 
@@ -32,6 +33,39 @@ def _truncate(value, max_length):
     return text if len(text) <= max_length else f"{text[: max_length - 1]}…"
 
 
+def _fit_to_width(value, width, font_name="Helvetica", font_size=8.5):
+    text = _clean(value)
+    if stringWidth(text, font_name, font_size) <= width:
+        return text
+    suffix = "..."
+    while len(text) > 1 and stringWidth(text + suffix, font_name, font_size) > width:
+        text = text[:-1]
+    return text.rstrip() + suffix
+
+
+def _wrap_to_width(value, width, font_name="Helvetica", font_size=8.5):
+    lines = []
+    segments = _clean(value).split(",")
+    for segment_index, segment in enumerate(segments):
+        words = segment.strip().split()
+        if not words:
+            continue
+        suffix = "," if segment_index < len(segments) - 1 else ""
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            if current and stringWidth(candidate + suffix, font_name, font_size) > width:
+                lines.append(current)
+                current = word
+            else:
+                current = candidate
+        if current:
+            lines.append(current + suffix)
+    if not lines:
+        return ["—"]
+    return [_fit_to_width(line, width, font_name, font_size) for line in lines]
+
+
 def _full_name(order):
     address_name = getattr(order.address, "full_name", None) if order.address else None
     user_name = " ".join(
@@ -50,7 +84,11 @@ def _item_context(item):
 
     unit_label = _clean(getattr(unit, "name", None)) if unit else "—"
     unit_type_label = _clean(getattr(unit_type, "name", None)) if unit_type else "—"
-    size_label = unit_label if unit_type_label == "—" else f"{unit_label} {unit_type_label}"
+    size_label = (
+        unit_label
+        if unit_type_label == "—" or unit_type_label.lower() in unit_label.lower()
+        else f"{unit_label} {unit_type_label}"
+    )
 
     regions = []
     if variant_unit and variant_unit.variant_id:
@@ -87,12 +125,15 @@ def _draw_section_header(pdf, title, x, y, width):
     return y - 18
 
 
-def _draw_field(pdf, label, value, x, y, value_x):
+def _draw_field(pdf, label, value, x, y, value_x, value_width):
     pdf.setFillColor(INK)
     pdf.setFont("Helvetica", 7.8)
     pdf.drawString(x, y, _clean(label).upper() + ":")
     pdf.setFont("Helvetica", 8.5)
-    pdf.drawString(value_x, y, _truncate(value, 28))
+    lines = _wrap_to_width(value, value_width)
+    for line_index, line in enumerate(lines):
+        pdf.drawString(value_x, y - line_index * 10, line)
+    return max(13, len(lines) * 10)
 
 
 def _draw_logo(pdf, x, y):
@@ -105,7 +146,7 @@ def _draw_logo(pdf, x, y):
     pdf.drawString(x + 3, y + 22, "eehook")
     pdf.setFillColor(ORANGE)
     pdf.setFont("Helvetica-Oblique", 6)
-    pdf.drawRightString(x + 73, y + 13, "Serving Different")
+    pdf.drawRightString(x + 73, y + 13, "Seriously Different")
 
 
 def _draw_barcode(pdf, value, x, y, width_limit, height, bar_width=0.8, human=True):
@@ -131,11 +172,6 @@ def render_package_label(order):
     contexts = [_item_context(item) for item in items]
     order_number = f"EHK26/{order.pk:04d}"
     package_code = order_number.replace("/", "-")
-    # The reference label has no item list, while this implementation adds a
-    # small barcode row for every ordered product. Reserve that row even for a
-    # single-item order, then grow the strip for additional products.
-    extra_height = 30 + max(0, len(items) - 1) * 28
-    page_height = BASE_PAGE_HEIGHT + extra_height
     address = order.address
     customer_name = _full_name(order)
     phone = _clean(getattr(address, "phone", None) if address else None)
@@ -169,6 +205,21 @@ def render_package_label(order):
         "SERVICE": _clean(order.payment_method, "Standard"),
         "PAYMENT": "PAID" if str(order.payment_status).strip().lower() == "paid" else "UNPAID",
     }
+    package_info_value_width = 90
+    package_info_extra_height = sum(
+        max(0, len(_wrap_to_width(value, package_info_value_width)) - 1) * 10
+        for value in package_info.values()
+    )
+    # The reference label has no item list, while this implementation adds a
+    # small barcode row for every ordered product. Reserve that row even for a
+    # single-item order, then grow the strip for additional products and
+    # wrapped package values.
+    extra_height = (
+        30
+        + max(0, len(items) - 1) * 28
+        + package_info_extra_height
+    )
+    page_height = BASE_PAGE_HEIGHT + extra_height
 
     stream = BytesIO()
     pdf = canvas.Canvas(stream, pagesize=(PAGE_WIDTH, page_height))
@@ -227,8 +278,7 @@ def render_package_label(order):
     y = _draw_section_header(pdf, "PACKAGE INFORMATION", 18, barcode_bottom - 16, 140)
     value_x = 76
     for label, value in package_info.items():
-        _draw_field(pdf, label, value, 18, y, value_x)
-        y -= 13
+        y -= _draw_field(pdf, label, value, 18, y, value_x, package_info_value_width)
 
     x = 182
     y = _draw_section_header(pdf, "SPECIAL INSTRUCTIONS", x, barcode_bottom - 16, 220)
