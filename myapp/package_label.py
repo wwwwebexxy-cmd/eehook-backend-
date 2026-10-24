@@ -132,29 +132,44 @@ def _draw_field(pdf, label, value, x, y, value_x, value_width):
     pdf.setFillColor(INK)
     pdf.setFont("Helvetica", 7.8)
     pdf.drawString(x, y, _clean(label).upper() + ":")
-    pdf.setFont("Helvetica", 8.5)
-    lines = _wrap_to_width(value, value_width)
+    pdf.setFont("Helvetica", 8.0)
+    lines = _wrap_to_width(value, value_width, font_size=8.0)
     for line_index, line in enumerate(lines):
-        pdf.drawString(value_x, y - line_index * 10, line)
-    return max(13, len(lines) * 10)
+        pdf.drawString(value_x, y - line_index * 9, line)
+    return max(13, len(lines) * 9 + 2)
 
 
 def _draw_logo(pdf, x, y, width=72, height=62):
     if PACKAGE_LOGO_PATH.is_file():
         image = ImageReader(str(PACKAGE_LOGO_PATH))
         image_width, image_height = image.getSize()
-        scale = min(width / image_width, height / image_height)
+        # The supplied logo is a white canvas with generous whitespace. Clip
+        # that canvas to the actual mark while keeping the original asset.
+        crop_left, crop_top, crop_right, crop_bottom = 28, 36, 250, 125
+        crop_width = crop_right - crop_left
+        crop_height = crop_bottom - crop_top
+        scale = min(width / crop_width, height / crop_height)
         draw_width = image_width * scale
         draw_height = image_height * scale
+        crop_draw_width = crop_width * scale
+        crop_draw_height = crop_height * scale
+        draw_x = x + (width - crop_draw_width) / 2 - crop_left * scale
+        draw_y = y + (height - crop_draw_height) / 2 - (image_height - crop_bottom) * scale
+
+        pdf.saveState()
+        clip = pdf.beginPath()
+        clip.rect(x, y, width, height)
+        pdf.clipPath(clip, stroke=0, fill=0)
         pdf.drawImage(
             image,
-            x + (width - draw_width) / 2,
-            y + (height - draw_height) / 2,
+            draw_x,
+            draw_y,
             width=draw_width,
             height=draw_height,
-            preserveAspectRatio=True,
+            preserveAspectRatio=False,
             mask="auto",
         )
+        pdf.restoreState()
         return
 
     # Keep a small fallback for environments where the bundled image is not
@@ -185,6 +200,27 @@ def _draw_barcode(pdf, value, x, y, width_limit, height, bar_width=0.8, human=Tr
         pdf.scale(scale, 1)
     barcode.drawOn(pdf, 0, 0)
     pdf.restoreState()
+
+
+def _draw_barcode_box(pdf, value, x, y, width, height, barcode_height, human=True):
+    """Draw a barcode inside a bounded, aligned light container."""
+
+    pdf.saveState()
+    pdf.setFillColor(HexColor("#fbfcfa"))
+    pdf.setStrokeColor(HexColor("#dfe7e3"))
+    pdf.setLineWidth(0.7)
+    pdf.roundRect(x, y, width, height, 3, fill=1, stroke=1)
+    pdf.restoreState()
+    _draw_barcode(
+        pdf,
+        value,
+        x + 10,
+        y + (height - barcode_height) / 2,
+        width - 20,
+        barcode_height,
+        bar_width=0.75 if human else 0.4,
+        human=human,
+    )
 
 
 def render_package_label(order):
@@ -227,20 +263,16 @@ def render_package_label(order):
         "SERVICE": _clean(order.payment_method, "Standard"),
         "PAYMENT": "PAID" if str(order.payment_status).strip().lower() == "paid" else "UNPAID",
     }
-    package_info_value_width = 90
+    package_info_value_width = 84
     package_info_extra_height = sum(
-        max(0, len(_wrap_to_width(value, package_info_value_width)) - 1) * 10
+        max(0, len(_wrap_to_width(value, package_info_value_width, font_size=8.0)) - 1) * 9
         for value in package_info.values()
     )
     # The reference label has no item list, while this implementation adds a
     # small barcode row for every ordered product. Reserve that row even for a
     # single-item order, then grow the strip for additional products and
     # wrapped package values.
-    extra_height = (
-        30
-        + max(0, len(items) - 1) * 28
-        + package_info_extra_height
-    )
+    extra_height = 36 + max(0, len(items) - 1) * 34 + package_info_extra_height
     page_height = BASE_PAGE_HEIGHT + extra_height
 
     stream = BytesIO()
@@ -265,7 +297,7 @@ def render_package_label(order):
     ship_to_column_right = 250
     pdf.line(logo_column_right, top_bottom, logo_column_right, top)
     pdf.line(ship_to_column_right, top_bottom, ship_to_column_right, top)
-    _draw_logo(pdf, 12, top_bottom + 8, width=70, height=70)
+    _draw_logo(pdf, 8, top_bottom + 8, width=78, height=70)
     x = logo_column_right + 10
     y = _draw_section_header(pdf, "SHIP TO", x, top - 17, 140)
     pdf.setFont("Helvetica-Bold", 10.5)
@@ -289,7 +321,15 @@ def render_package_label(order):
 
     # Large package barcode and a prominent delivery contact block.
     pdf.line(250, barcode_bottom, 250, top_bottom)
-    _draw_barcode(pdf, package_code, 28, barcode_bottom + 25, 205, 28, bar_width=0.75)
+    _draw_barcode_box(
+        pdf,
+        package_code,
+        18,
+        barcode_bottom + 14,
+        220,
+        50,
+        27,
+    )
     pdf.setFillColor(INK)
     pdf.setFont("Helvetica-Bold", 12)
     pdf.drawCentredString(335, barcode_bottom + 45, _truncate(customer_name, 18).upper())
@@ -325,14 +365,30 @@ def render_package_label(order):
     pdf.setFont("Helvetica-Bold", 7.5)
     pdf.drawString(x, y, "ITEM BARCODES")
     y -= 12
+    item_row_width = PAGE_WIDTH - margin - x - 8
     for index, (item, context) in enumerate(zip(items, contexts), start=1):
         item_code = f"{package_code}-P{index:02d}"
+        row_bottom = y - 26
+        pdf.setFillColor(HexColor("#fbfcfa"))
+        pdf.setStrokeColor(HexColor("#dfe7e3"))
+        pdf.setLineWidth(0.7)
+        pdf.roundRect(x, row_bottom, item_row_width, 31, 3, fill=1, stroke=1)
+        pdf.setFillColor(INK)
         pdf.setFont("Helvetica", 6.8)
-        pdf.drawString(x, y, _truncate(f"{item.quantity} × {context['name']}", 35))
-        _draw_barcode(pdf, item_code, x, y - 16, 100, 13, bar_width=0.45, human=False)
+        pdf.drawString(x + 6, y, _truncate(f"{item.quantity} × {context['name']}", 35))
+        _draw_barcode(
+            pdf,
+            item_code,
+            x + 8,
+            row_bottom + 7,
+            96,
+            12,
+            bar_width=0.4,
+            human=False,
+        )
         pdf.setFont("Helvetica", 6.4)
-        pdf.drawString(x + 106, y - 11, item_code)
-        y -= 27
+        pdf.drawString(x + 112, y - 11, item_code)
+        y -= 34
 
     collection_label = (
         "COD / WHATSAPP ORDER" if order.payment_method in ("COD", "WHATSAPP") else "PREPAID ORDER"
