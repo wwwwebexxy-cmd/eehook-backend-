@@ -1,7 +1,9 @@
+from decimal import Decimal
+
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from .invoice import render_tax_invoice
+from .invoice import _invoice_lines, render_tax_invoice
 from .models import Address, Category, Order, OrderItem, Product, ProductVariant, SubCategory, User
 
 
@@ -47,8 +49,8 @@ class TaxInvoiceTests(TestCase):
             address=address,
             subtotal="105.00",
             discount_amount="0.00",
-            shipping_charge="0.00",
-            total_amount="105.00",
+            shipping_charge="10.00",
+            total_amount="115.00",
             payment_status="Paid",
             payment_method="Cashfree",
             status="Processing",
@@ -61,6 +63,17 @@ class TaxInvoiceTests(TestCase):
             price="105.00",
             total_price="105.00",
         )
+
+    def test_delivery_charge_is_not_taxable(self):
+        rows = _invoice_lines(self.order)
+        product_row = next(row for row in rows if row["sku"] == "INV-TEST-001")
+        delivery_row = next(row for row in rows if row["sku"] == "SHIP")
+
+        self.assertEqual(product_row["tax_rate"], "5.00")
+        self.assertEqual(product_row["vat"], Decimal("5.00"))
+        self.assertEqual(delivery_row["tax_rate"], "0.00")
+        self.assertEqual(delivery_row["vat"], Decimal("0.00"))
+        self.assertEqual(delivery_row["net_total"], Decimal("10.00"))
 
     def test_render_tax_invoice_uses_tax_inclusive_totals(self):
         pdf = render_tax_invoice(self.order)

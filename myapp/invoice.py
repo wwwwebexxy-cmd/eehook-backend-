@@ -157,6 +157,7 @@ def _invoice_lines(order):
                 "quantity": quantity,
                 "gross_unit": gross_unit,
                 "gross_total": gross_total,
+                "taxable": True,
             }
         )
 
@@ -170,6 +171,7 @@ def _invoice_lines(order):
                 "quantity": 1,
                 "gross_unit": shipping,
                 "gross_total": shipping,
+                "taxable": False,
             }
         )
 
@@ -182,24 +184,31 @@ def _invoice_lines(order):
                 "quantity": 1,
                 "gross_unit": _money(order.total_amount),
                 "gross_total": _money(order.total_amount),
+                "taxable": True,
             }
         )
 
-    gross_total = _money(order.total_amount)
-    total_net = _money(gross_total / (Decimal("1") + VAT_RATE))
+    taxable_rows = [row for row in rows if row["taxable"]]
+    taxable_gross = sum((row["gross_total"] for row in taxable_rows), Decimal("0.00"))
+    total_net = _money(taxable_gross / (Decimal("1") + VAT_RATE))
     running_net = Decimal("0.00")
-    for row in rows[:-1]:
-        row["net_unit"] = _money(row["gross_unit"] / (Decimal("1") + VAT_RATE))
-        row["net_total"] = _money(row["gross_total"] / (Decimal("1") + VAT_RATE))
-        row["vat"] = row["gross_total"] - row["net_total"]
-        running_net += row["net_total"]
-
-    last = rows[-1]
-    last["net_total"] = total_net - running_net
-    last["vat"] = last["gross_total"] - last["net_total"]
-    last["net_unit"] = _money(last["net_total"] / max(last["quantity"], 1))
+    last_taxable = taxable_rows[-1] if taxable_rows else None
     for row in rows:
-        row["tax_rate"] = "5.00"
+        if row["taxable"]:
+            if row is last_taxable:
+                row["net_total"] = _money(total_net - running_net)
+            else:
+                row["net_total"] = _money(
+                    row["gross_total"] / (Decimal("1") + VAT_RATE)
+                )
+            row["vat"] = row["gross_total"] - row["net_total"]
+            running_net += row["net_total"]
+            row["tax_rate"] = "5.00"
+        else:
+            row["net_total"] = row["gross_total"]
+            row["vat"] = Decimal("0.00")
+            row["tax_rate"] = "0.00"
+        row["net_unit"] = _money(row["net_total"] / max(row["quantity"], 1))
     return rows
 
 
@@ -207,7 +216,8 @@ def _paragraph(text, style):
     return Paragraph(text, style)
 
 
-def _build_table(pdf, order, table_top):
+def _build_table(pdf, order, table_top, rows=None):
+    rows = _invoice_lines(order) if rows is None else rows
     body_style = ParagraphStyle(
         "InvoiceBody",
         fontName="Helvetica",
@@ -245,7 +255,7 @@ def _build_table(pdf, order, table_top):
         "VAT<br/>Amount",
     ]
     data = [[_paragraph(header, header_style) for header in headers]]
-    for row in _invoice_lines(order):
+    for row in rows:
         data.append(
             [
                 _paragraph(escape(row["item_number"]), center_style),
@@ -281,7 +291,7 @@ def _build_table(pdf, order, table_top):
     return table_height
 
 
-def _draw_summary(pdf, order, page_height):
+def _draw_summary(pdf, order, page_height, rows):
     x = 355
     y = 218
     pdf.setFillColor(INK)
@@ -291,8 +301,12 @@ def _draw_summary(pdf, order, page_height):
     pdf.drawString(x + 126, y, "VAT Rate")
     y -= 26
     gross_total = _money(order.total_amount)
-    net_total = _money(gross_total / (Decimal("1") + VAT_RATE))
-    vat_total = gross_total - net_total
+    net_total = _money(
+        sum((row["net_total"] for row in rows if row["taxable"]), Decimal("0.00"))
+    )
+    vat_total = _money(
+        sum((row["vat"] for row in rows if row["taxable"]), Decimal("0.00"))
+    )
     pdf.setFont("Helvetica", 8.5)
     pdf.drawString(x + 2, y, _money_text(net_total))
     pdf.drawString(x + 61, y, _money_text(vat_total))
@@ -337,9 +351,12 @@ def _draw_footer(pdf, page_height):
 def render_tax_invoice(order):
     """Return a portrait tax invoice PDF for a paid order."""
 
+    rows = _invoice_lines(order)
     probe = BytesIO()
     probe_pdf = canvas.Canvas(probe, pagesize=(PAGE_WIDTH, BASE_PAGE_HEIGHT))
-    probe_table_height = _build_table(probe_pdf, order, BASE_PAGE_HEIGHT - 360)
+    probe_table_height = _build_table(
+        probe_pdf, order, BASE_PAGE_HEIGHT - 360, rows=rows
+    )
     probe_pdf.save()
     page_height = max(BASE_PAGE_HEIGHT, 700 + probe_table_height)
 
@@ -387,8 +404,8 @@ def render_tax_invoice(order):
     _draw_label_value(pdf, "Payment Status", _clean(order.payment_status), MARGIN, payment_y - 34, MARGIN + 87)
 
     table_top = page_height - 405
-    _build_table(pdf, order, table_top)
-    _draw_summary(pdf, order, page_height)
+    _build_table(pdf, order, table_top, rows=rows)
+    _draw_summary(pdf, order, page_height, rows)
     _draw_footer(pdf, page_height)
     pdf.showPage()
     pdf.save()
