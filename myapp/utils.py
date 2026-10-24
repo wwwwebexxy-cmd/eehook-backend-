@@ -104,11 +104,16 @@ def calculate_offer_price(price, offer):
     if not is_offer_valid(offer):
         return price
 
-    discount = (
-        price *
-        Decimal(str(offer.discount_percentage))
-        / Decimal("100")
-    )
+    if getattr(offer, "discount_type", "PERCENTAGE") == "FIXED":
+        discount = Decimal(str(getattr(offer, "fixed_amount", None) or 0))
+    else:
+        discount = (
+            price *
+            Decimal(str(getattr(offer, "discount_percentage", None) or 0))
+            / Decimal("100")
+        )
+
+    discount = min(max(discount, Decimal("0.00")), max(price, Decimal("0.00")))
 
     discounted_price = price - discount
 
@@ -129,6 +134,16 @@ def calculate_discount_amount(price, offer):
     discount = price - discounted_price
 
     return discount.quantize(
+        Decimal("0.01")
+    )
+
+
+def get_offer_discount_percentage(price, offer):
+    """Return the effective percentage for a product-card discount label."""
+    price = Decimal(str(price or 0))
+    if not is_offer_valid(offer) or price <= 0:
+        return Decimal("0.00")
+    return (calculate_discount_amount(price, offer) * Decimal("100") / price).quantize(
         Decimal("0.01")
     )
 
@@ -209,13 +224,11 @@ def get_product_prices(product):
         product.offer
     )
 
-    discount_percentage = 0
-
-    if has_offer:
-
-        discount_percentage = (
-            product.offer.discount_percentage
-        )
+    discount_percentage = (
+        get_offer_discount_percentage(starting_price, product.offer)
+        if has_offer
+        else Decimal("0.00")
+    )
 
     return {
         "starting_price": starting_price.quantize(

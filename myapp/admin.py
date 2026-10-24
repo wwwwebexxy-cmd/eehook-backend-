@@ -73,7 +73,9 @@ class OfferAdmin(admin.ModelAdmin):
 
     list_display = (
         "title",
+        "discount_type",
         "discount_percentage",
+        "fixed_amount",
         "is_active"
     )
     

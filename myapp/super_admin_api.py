@@ -55,7 +55,7 @@ from .models import (
 )
 from .permissions import IsSuperAdmin
 from .catalog_pricing import get_product_price_values
-from .serializers import CouponSerializer
+from .serializers import CouponSerializer, OfferSerializer
 
 
 class SuperAdminPagination(PageNumberPagination):
@@ -475,15 +475,7 @@ class AdminSubCategoryViewSet(AdminModelViewSet):
 class AdminOfferViewSet(AdminModelViewSet):
     queryset = Offer.objects.all().order_by("-created_at")
     search_fields = ("title", "description")
-
-    def get_serializer_class(self):
-        class OfferAdminSerializer(serializers.ModelSerializer):
-            class Meta:
-                model = Offer
-                fields = "__all__"
-                read_only_fields = ("id", "created_at")
-
-        return OfferAdminSerializer
+    serializer_class = OfferSerializer
 
 
 class AdminColorViewSet(AdminModelViewSet):

@@ -2192,8 +2192,14 @@ def offer_products(request):
             if offer.image
             else None,
 
-            "discount":
-            offer.discount_percentage
+            "discount_type": offer.discount_type,
+            "discount_percentage": offer.discount_percentage,
+            "fixed_amount": offer.fixed_amount,
+            "discount": (
+                offer.fixed_amount
+                if offer.discount_type == Offer.DISCOUNT_FIXED
+                else offer.discount_percentage
+            )
 
         },
 

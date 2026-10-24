@@ -281,8 +281,10 @@ class ProductVariantUnitSerializer(
         if is_offer_valid(
             obj.variant.product.offer
         ):
-
-            return obj.variant.product.offer.discount_percentage
+            return get_offer_discount_percentage(
+                obj.price or 0,
+                obj.variant.product.offer,
+            )
 
         return 0     
 
@@ -341,7 +343,7 @@ class ProductVariantSerializer(serializers.ModelSerializer):
 
     def get_discount_percentage(self, obj):
         if is_offer_valid(obj.product.offer):
-            return obj.product.offer.discount_percentage
+            return get_offer_discount_percentage(obj.price or 0, obj.product.offer)
         return 0
 
 
@@ -590,7 +592,8 @@ class CartSerializer(serializers.ModelSerializer):
         self,
         obj
     ):
-        p_pct = obj.variant.product.offer.discount_percentage if is_offer_valid(obj.variant.product.offer) else 0
+        price = (obj.variant.price or 0) if obj.variant.price_type == "single" else ((obj.variant_unit.price or 0) if obj.variant_unit else 0)
+        p_pct = get_offer_discount_percentage(price, obj.variant.product.offer)
         welcome_bonus = get_eligible_welcome_bonus_assignment(
             getattr(obj, "welcome_bonus_assignment_id", None),
             obj.user,
@@ -732,15 +735,97 @@ class AddressSerializer(serializers.ModelSerializer):
 
         return super().update(instance, validated_data)
         
-class OfferSerializer(
-    serializers.ModelSerializer
-):
+class OfferSerializer(serializers.ModelSerializer):
+    discount_value = serializers.SerializerMethodField(read_only=True)
+    discount_type_label = serializers.CharField(
+        source="get_discount_type_display",
+        read_only=True,
+    )
 
     class Meta:
-
         model = Offer
+        fields = (
+            "id",
+            "title",
+            "description",
+            "image",
+            "discount_type",
+            "discount_type_label",
+            "discount_percentage",
+            "fixed_amount",
+            "discount_value",
+            "start_date",
+            "end_date",
+            "is_active",
+            "created_at",
+        )
+        read_only_fields = ("id", "discount_type_label", "discount_value", "created_at")
 
-        fields = "__all__"
+    def to_internal_value(self, data):
+        data = data.copy()
+        if "discount_type" in data:
+            discount_type = str(data["discount_type"]).upper()
+            if discount_type in {"FIXED_AMOUNT", "FIXED AMOUNT"}:
+                data["discount_type"] = Offer.DISCOUNT_FIXED
+            elif discount_type == "PERCENTAGE_DISCOUNT":
+                data["discount_type"] = Offer.DISCOUNT_PERCENTAGE
+        if "discount_value" in data:
+            discount_type = str(
+                data.get(
+                    "discount_type",
+                    getattr(self.instance, "discount_type", Offer.DISCOUNT_PERCENTAGE),
+                )
+            ).upper()
+            value_field = (
+                "fixed_amount"
+                if discount_type in {Offer.DISCOUNT_FIXED, "FIXED_AMOUNT", "FIXED AMOUNT"}
+                else "discount_percentage"
+            )
+            data.setdefault(value_field, data["discount_value"])
+        return super().to_internal_value(data)
+
+    def validate(self, attrs):
+        instance = self.instance
+        discount_type = attrs.get(
+            "discount_type",
+            getattr(instance, "discount_type", Offer.DISCOUNT_PERCENTAGE),
+        )
+        percentage = attrs.get(
+            "discount_percentage",
+            getattr(instance, "discount_percentage", None),
+        )
+        fixed_amount = attrs.get(
+            "fixed_amount",
+            getattr(instance, "fixed_amount", None),
+        )
+
+        if discount_type == Offer.DISCOUNT_PERCENTAGE:
+            if percentage is None or percentage <= 0 or percentage > 100:
+                raise serializers.ValidationError(
+                    {"discount_percentage": "Percentage must be greater than 0 and at most 100."}
+                )
+            attrs["fixed_amount"] = None
+        elif discount_type == Offer.DISCOUNT_FIXED:
+            if fixed_amount is None or fixed_amount <= 0:
+                raise serializers.ValidationError(
+                    {"fixed_amount": "Fixed amount must be greater than 0."}
+                )
+            attrs["discount_percentage"] = None
+        else:
+            raise serializers.ValidationError(
+                {"discount_type": "Select Percentage or Fixed Amount."}
+            )
+
+        start_date = attrs.get("start_date", getattr(instance, "start_date", None))
+        end_date = attrs.get("end_date", getattr(instance, "end_date", None))
+        if start_date and end_date and start_date > end_date:
+            raise serializers.ValidationError(
+                {"end_date": "Expiry date must be on or after the start date."}
+            )
+        return attrs
+
+    def get_discount_value(self, obj):
+        return obj.fixed_amount if obj.discount_type == Offer.DISCOUNT_FIXED else obj.discount_percentage
         
 class OrderItemSerializer(
     serializers.ModelSerializer
@@ -1163,7 +1248,8 @@ class WishlistSerializer(serializers.ModelSerializer):
         if is_offer_valid(
             obj.variant.product.offer
         ):
-            return obj.variant.product.offer.discount_percentage
+            price = (obj.variant.price or 0) if obj.variant.price_type == "single" else ((obj.variant_unit.price or 0) if obj.variant_unit else 0)
+            return get_offer_discount_percentage(price, obj.variant.product.offer)
 
         return 0
         
