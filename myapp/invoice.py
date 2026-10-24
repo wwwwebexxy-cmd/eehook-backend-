@@ -372,17 +372,76 @@ def _draw_summary(pdf, order, page_height, rows):
     pdf.drawString(left_x, note_y - 87, "Web: www.eehook.com/support")
 
 
+def _draw_social_icon(pdf, platform, x, y, size):
+    """Draw a compact vector social icon without adding a font dependency."""
+
+    pdf.saveState()
+    pdf.setFillColor(HexColor("#202035"))
+    pdf.circle(x + size / 2, y + size / 2, size / 2, fill=1, stroke=0)
+
+    if platform == "instagram":
+        pdf.setStrokeColor(white)
+        pdf.setLineWidth(1.2)
+        pdf.roundRect(x + 4, y + 4, size - 8, size - 8, 3, fill=0, stroke=1)
+        pdf.circle(x + size / 2, y + size / 2, size * 0.15, fill=0, stroke=1)
+        pdf.setFillColor(white)
+        pdf.circle(x + size - 5, y + size - 5, 1, fill=1, stroke=0)
+    elif platform == "facebook":
+        pdf.setFillColor(white)
+        pdf.setFont("Helvetica-Bold", 12)
+        pdf.drawCentredString(x + size / 2, y + 3, "f")
+    elif platform == "tiktok":
+        pdf.setStrokeColor(white)
+        pdf.setFillColor(white)
+        pdf.setLineWidth(1.4)
+        pdf.line(x + size * 0.58, y + size * 0.72, x + size * 0.58, y + size * 0.34)
+        pdf.line(x + size * 0.58, y + size * 0.72, x + size * 0.80, y + size * 0.65)
+        pdf.circle(x + size * 0.42, y + size * 0.28, size * 0.13, fill=1, stroke=0)
+    elif platform == "youtube":
+        pdf.setFillColor(HexColor("#ff0000"))
+        pdf.roundRect(x + 2, y + 5, size - 4, size - 10, 3, fill=1, stroke=0)
+        triangle = pdf.beginPath()
+        triangle.moveTo(x + size * 0.43, y + size * 0.34)
+        triangle.lineTo(x + size * 0.43, y + size * 0.66)
+        triangle.lineTo(x + size * 0.70, y + size * 0.50)
+        triangle.close()
+        pdf.setFillColor(white)
+        pdf.drawPath(triangle, fill=1, stroke=0)
+    elif platform == "x":
+        pdf.setStrokeColor(white)
+        pdf.setLineWidth(1.5)
+        pdf.line(x + 5, y + 5, x + size - 5, y + size - 5)
+        pdf.line(x + size - 5, y + 5, x + 5, y + size - 5)
+    elif platform == "snapchat":
+        pdf.setFillColor(HexColor("#fffc00"))
+        pdf.circle(x + size / 2, y + size / 2, size * 0.31, fill=1, stroke=0)
+        pdf.setFillColor(HexColor("#111111"))
+        pdf.setFont("Helvetica-Bold", 7)
+        pdf.drawCentredString(x + size / 2, y + 4.5, "S")
+
+    pdf.restoreState()
+
+
 def _draw_footer(pdf, page_height):
     y = 56
     center = PAGE_WIDTH / 2
-    pdf.setFillColor(HexColor("#1f1f1f"))
-    for index, label in enumerate(("ig", "tw", "yt", "fb", "tk")):
-        x = center - 48 + index * 24
-        pdf.setFillColor(HexColor("#202035"))
-        pdf.circle(x, y, 7, fill=1, stroke=0)
-        pdf.setFillColor(white)
-        pdf.setFont("Helvetica-Bold", 5.5)
-        pdf.drawCentredString(x, y - 2, label)
+    icon_size = 18
+    gap = 8
+    social_links = (
+        ("instagram", "https://www.instagram.com/eehook.ae"),
+        ("facebook", "https://www.facebook.com/eehookonline/"),
+        ("tiktok", "https://www.tiktok.com/@eehook.com"),
+        ("youtube", "https://www.youtube.com/@eehook9631"),
+        ("x", "https://x.com/eehookonline"),
+        ("snapchat", "https://www.snapchat.com/add/eehook.com"),
+    )
+    total_width = len(social_links) * icon_size + (len(social_links) - 1) * gap
+    start_x = center - total_width / 2
+    for index, (platform, url) in enumerate(social_links):
+        x = start_x + index * (icon_size + gap)
+        _draw_social_icon(pdf, platform, x, y, icon_size)
+        pdf.linkURL(url, (x, y, x + icon_size, y + icon_size), relative=0, thickness=0)
+
     pdf.setFillColor(HexColor("#303047"))
     pdf.setFont("Helvetica", 9)
     pdf.drawCentredString(center, y - 22, "Follow our social media @eehook")
