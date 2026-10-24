@@ -167,6 +167,7 @@ def render_package_label(order):
         "SHIP DATE": "—",
         "REFERENCE": f"ORD-{order.pk:06d}",
         "SERVICE": _clean(order.payment_method, "Standard"),
+        "PAYMENT": "PAID" if str(order.payment_status).strip().lower() == "paid" else "UNPAID",
     }
 
     stream = BytesIO()
@@ -259,9 +260,11 @@ def render_package_label(order):
     collection_label = (
         "COD / WHATSAPP ORDER" if order.payment_method in ("COD", "WHATSAPP") else "PREPAID ORDER"
     )
+    payment_label = "PAID" if str(order.payment_status).strip().lower() == "paid" else "UNPAID"
     pdf.setFillColor(INK)
     pdf.setFont("Helvetica-Bold", 7.5)
-    pdf.drawCentredString(x + 66, lower_bottom + 23, collection_label)
+    pdf.drawCentredString(x + 66, lower_bottom + 31, collection_label)
+    pdf.drawCentredString(x + 66, lower_bottom + 19, f"PAYMENT: {payment_label}")
     if order.payment_method in ("COD", "WHATSAPP") and order.payment_status != "Paid":
         amount = f"AED {order.total_amount:,.2f}"
     else:
