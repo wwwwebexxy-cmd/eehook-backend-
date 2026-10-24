@@ -3363,11 +3363,9 @@ def get_promo_banners(request):
 
 @api_view(["GET"])
 def get_hero_side_banner(request):
-    banner = HeroSideBanner.objects.filter(is_active=True).first()
-    if banner:
-        serializer = HeroSideBannerSerializer(banner)
-        return Response(serializer.data)
-    return Response({})
+    banners = HeroSideBanner.objects.filter(is_active=True).order_by("id")
+    serializer = HeroSideBannerSerializer(banners, many=True)
+    return Response(serializer.data)
 
 from rest_framework import viewsets, filters
 from rest_framework.decorators import action
