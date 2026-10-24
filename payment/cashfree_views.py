@@ -28,6 +28,7 @@ from myapp.models import (
 )
 from myapp.utils import (
     PaymentRateThrottle,
+    calculate_cart_shipping,
     calculate_coupon_price,
     calculate_offer_price,
     calculate_order_total,
@@ -176,7 +177,10 @@ def _snapshot_from_cart(user):
             }
         )
 
-    totals = calculate_order_total(discounted_subtotal)
+    totals = calculate_order_total(
+        discounted_subtotal,
+        calculate_cart_shipping(cart_items),
+    )
     return {
         "products": products,
         "original_subtotal": str(_money(original_subtotal)),

@@ -33,6 +33,7 @@ from myapp.models import (
 from myapp.order_notifications import send_order_notifications
 
 from myapp.utils import (
+    calculate_cart_shipping,
     calculate_offer_price,
     calculate_order_total,
     calculate_coupon_price,
@@ -247,7 +248,8 @@ def create_checkout_session(request):
 
 
     totals = calculate_order_total(
-        discounted_subtotal
+        discounted_subtotal,
+        calculate_cart_shipping(cart_items),
     )
 
 

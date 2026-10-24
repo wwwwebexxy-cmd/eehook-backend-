@@ -67,7 +67,12 @@ import csv
 
 import logging
 from google.auth.exceptions import GoogleAuthError
-from .utils import AuthRateThrottle, SearchRateThrottle
+from .utils import (
+    AuthRateThrottle,
+    SearchRateThrottle,
+    calculate_cart_shipping,
+    calculate_order_total,
+)
 from .auth_cookies import clear_auth_cookies, set_auth_cookies
 from .authentication import enforce_csrf
 from .welcome_bonus import (
@@ -1634,7 +1639,8 @@ def get_cart(request):
         total_items += item.quantity
 
     totals = calculate_order_total(
-        subtotal
+        subtotal,
+        calculate_cart_shipping(cart_items),
     )
 
     return Response(
@@ -1759,7 +1765,8 @@ def update_cart_quantity(request, id):
         total_items += item.quantity
 
     totals = calculate_order_total(
-        subtotal
+        subtotal,
+        calculate_cart_shipping(cart_items),
     )
 
     return Response(
@@ -1942,7 +1949,8 @@ def place_order(request):
         )
 
     totals = calculate_order_total(
-        discounted_subtotal
+        discounted_subtotal,
+        calculate_cart_shipping(cart_items),
     )
 
     order = Order.objects.create(

@@ -133,39 +133,35 @@ def calculate_discount_amount(price, offer):
     )
 
 
-def calculate_shipping(subtotal):
+def calculate_shipping(shipping_fee=0):
+
+    """Return only an explicitly configured shipping fee.
+
+    Shipping must not be inferred from the cart subtotal. A product with no
+    configured fee is treated as having no delivery charge.
+    """
+    shipping_charge = Decimal(str(shipping_fee or 0))
+    return max(shipping_charge, Decimal("0.00")).quantize(Decimal("0.01"))
+
+
+def calculate_cart_shipping(cart_items):
+
+    """Add configured product shipping fees once for each cart line."""
+    shipping_charge = Decimal("0.00")
+
+    for item in cart_items:
+        product = getattr(getattr(item, "variant", None), "product", None)
+        fee = getattr(product, "shipping_fee", 0) or 0
+        shipping_charge += max(Decimal(str(fee)), Decimal("0.00"))
+
+    return shipping_charge.quantize(Decimal("0.01"))
+
+
+def calculate_order_total(subtotal, shipping_fee=0):
 
     subtotal = Decimal(str(subtotal))
-    
-    if subtotal <= Decimal("0"):
-        return Decimal("0")
 
-    shipping_rules = [
-        (
-            Decimal("50"),
-            Decimal("5")
-        ),
-        (
-            Decimal("100"),
-            Decimal("10")
-        ),
-    ]
-
-    for minimum_amount, shipping_charge in shipping_rules:
-
-        if subtotal < minimum_amount:
-            return shipping_charge
-
-    return Decimal("15")
-
-
-def calculate_order_total(subtotal):
-
-    subtotal = Decimal(str(subtotal))
-
-    shipping_charge = calculate_shipping(
-        subtotal
-    )
+    shipping_charge = calculate_shipping(shipping_fee)
 
     total = subtotal + shipping_charge
 
