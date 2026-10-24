@@ -34,6 +34,10 @@ def welcome_bonus_applies_to_product(welcome_bonus, product):
         return bool(
             welcome_bonus.category_id
             and welcome_bonus.category_id == product.category_id
+            and (
+                not welcome_bonus.subcategory_id
+                or welcome_bonus.subcategory_id == product.subcategory_id
+            )
         )
     return welcome_bonus.products.filter(pk=product.pk).exists()
 

@@ -1217,6 +1217,13 @@ class WelcomeBonus(models.Model):
         blank=True,
         related_name="welcome_bonuses",
     )
+    subcategory = models.ForeignKey(
+        SubCategory,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="welcome_bonuses",
+    )
     applicability_type = models.CharField(
         max_length=20,
         choices=APPLICABILITY_CHOICES,
@@ -1279,8 +1286,15 @@ class WelcomeBonus(models.Model):
             errors["end_date"] = "Expiry date must be after the start date."
         if self.applicability_type == self.APPLICABILITY_CATEGORY and not self.category_id:
             errors["category"] = "A category is required for a category-wise welcome bonus."
+        if self.applicability_type == self.APPLICABILITY_CATEGORY and self.subcategory_id:
+            if not self.category_id:
+                errors["subcategory"] = "Select a category before choosing a subcategory."
+            elif self.subcategory.category_id != self.category_id:
+                errors["subcategory"] = "The subcategory must belong to the selected category."
         if self.applicability_type == self.APPLICABILITY_PRODUCT and self.category_id:
             errors["category"] = "Category must be empty for a product-wise welcome bonus."
+        if self.applicability_type == self.APPLICABILITY_PRODUCT and self.subcategory_id:
+            errors["subcategory"] = "Subcategory must be empty for a product-wise welcome bonus."
         if self.discount_type == self.DISCOUNT_PERCENTAGE:
             if self.discount_percentage is None or not (0 < self.discount_percentage <= 100):
                 errors["discount_percentage"] = "Percentage must be greater than 0 and at most 100."

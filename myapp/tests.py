@@ -2407,6 +2407,67 @@ class WelcomeBonusFlowTests(TestCase):
         self.assertEqual(rejected.status_code, 400, rejected.data)
         self.assertEqual(rejected.data["error_code"], "WELCOME_BONUS_NOT_APPLICABLE")
 
+    def test_subcategory_bonus_applies_only_to_selected_subcategory(self):
+        other_subcategory = SubCategory.objects.create(
+            category=self.category, name="Welcome accessories"
+        )
+        other_same_category_product = Product.objects.create(
+            category=self.category,
+            subcategory=other_subcategory,
+            name="Welcome accessory",
+            description="Same category, different subcategory.",
+        )
+        subcategory_bonus = WelcomeBonus.objects.create(
+            name="Shoes subcategory bonus",
+            applicability_type=WelcomeBonus.APPLICABILITY_CATEGORY,
+            category=self.category,
+            subcategory=self.subcategory,
+            discount_type=WelcomeBonus.DISCOUNT_PERCENTAGE,
+            discount_percentage=Decimal("15.00"),
+            start_date=timezone.now() - timedelta(minutes=1),
+            end_date=timezone.now() + timedelta(days=1),
+        )
+        assignment = WelcomeBonusAssignment.objects.get(
+            welcome_bonus=subcategory_bonus, user=self.customer
+        )
+        notification = WelcomeBonusNotification.objects.get(assignment=assignment)
+        self.assertEqual(
+            self.client.post(
+                f"/welcome-bonus-notifications/{notification.id}/claim/", format="json"
+            ).status_code,
+            200,
+        )
+        code = self.client.post(
+            f"/welcome-bonus-notifications/{notification.id}/copy-code/", format="json"
+        ).data["code"]
+        eligible = self.client.post(
+            "/validate-coupon/",
+            {"code": code, "product_id": self.product.id},
+            format="json",
+        )
+        self.assertEqual(eligible.status_code, 200, eligible.data)
+        ineligible = self.client.post(
+            "/validate-coupon/",
+            {"code": code, "product_id": other_same_category_product.id},
+            format="json",
+        )
+        self.assertEqual(ineligible.status_code, 400, ineligible.data)
+        self.assertEqual(ineligible.data["error_code"], "WELCOME_BONUS_NOT_APPLICABLE")
+
+    def test_subcategory_must_belong_to_selected_category(self):
+        invalid_bonus = WelcomeBonus(
+            name="Invalid subcategory bonus",
+            applicability_type=WelcomeBonus.APPLICABILITY_CATEGORY,
+            category=self.category,
+            subcategory=self.other_subcategory,
+            discount_type=WelcomeBonus.DISCOUNT_FIXED,
+            fixed_amount=Decimal("5.00"),
+            start_date=timezone.now() - timedelta(minutes=1),
+            end_date=timezone.now() + timedelta(days=1),
+        )
+        with self.assertRaises(ValidationError):
+            invalid_bonus.full_clean()
+
     def test_admin_api_is_separate_and_protected(self):
         self.client.force_authenticate(user=self.customer)
         self.assertEqual(self.client.get("/admin/manage/welcome-bonuses/").status_code, 403)

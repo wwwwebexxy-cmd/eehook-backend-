@@ -500,14 +500,16 @@ class WelcomeBonusAdmin(admin.ModelAdmin):
         "redeemed_count",
     )
     list_filter = ("applicability_type", "discount_type", "is_active", "start_date", "end_date")
-    search_fields = ("name", "products__name", "category__name")
+    search_fields = ("name", "products__name", "category__name", "subcategory__name")
     autocomplete_fields = ("products", "category")
     readonly_fields = ("archived_at", "created_at", "updated_at")
 
     @admin.display(description="Target")
     def welcome_bonus_target(self, obj):
         if obj.applicability_type == WelcomeBonus.APPLICABILITY_CATEGORY:
-            return obj.category.name if obj.category else "-"
+            if not obj.category:
+                return "-"
+            return f"{obj.category.name} / {obj.subcategory.name}" if obj.subcategory else obj.category.name
         return ", ".join(obj.products.values_list("name", flat=True)[:3])
 
     @admin.display(description="Discount")

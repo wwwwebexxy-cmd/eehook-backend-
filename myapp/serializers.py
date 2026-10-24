@@ -1804,6 +1804,7 @@ class WelcomeBonusSerializer(serializers.ModelSerializer):
     """Admin-facing campaign serializer. It deliberately has no code field."""
 
     category_name = serializers.CharField(source="category.name", read_only=True)
+    subcategory_name = serializers.CharField(source="subcategory.name", read_only=True)
     target_name = serializers.SerializerMethodField(read_only=True)
     discount_value = serializers.SerializerMethodField(read_only=True)
     applicability_label = serializers.CharField(
@@ -1824,6 +1825,8 @@ class WelcomeBonusSerializer(serializers.ModelSerializer):
             "products",
             "category",
             "category_name",
+            "subcategory",
+            "subcategory_name",
             "target_name",
             "applicability_type",
             "applicability_label",
@@ -1844,6 +1847,7 @@ class WelcomeBonusSerializer(serializers.ModelSerializer):
         read_only_fields = (
             "id",
             "category_name",
+            "subcategory_name",
             "target_name",
             "applicability_label",
             "discount_type_label",
@@ -1895,6 +1899,7 @@ class WelcomeBonusSerializer(serializers.ModelSerializer):
             getattr(instance, "applicability_type", WelcomeBonus.APPLICABILITY_PRODUCT),
         )
         category = attrs.get("category", getattr(instance, "category", None))
+        subcategory = attrs.get("subcategory", getattr(instance, "subcategory", None))
         products = attrs.get("products")
         if products is None and instance is not None:
             products = list(instance.products.all())
@@ -1905,6 +1910,10 @@ class WelcomeBonusSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"category": "A category is required for a category-wise welcome bonus."}
                 )
+            if subcategory is not None and subcategory.category_id != category.id:
+                raise serializers.ValidationError(
+                    {"subcategory": "The subcategory must belong to the selected category."}
+                )
             if products:
                 raise serializers.ValidationError(
                     {"products": "Category-wise welcome bonuses must not contain product targets."}
@@ -1913,6 +1922,10 @@ class WelcomeBonusSerializer(serializers.ModelSerializer):
             if category is not None:
                 raise serializers.ValidationError(
                     {"category": "Category must be empty for a product-wise welcome bonus."}
+                )
+            if subcategory is not None:
+                raise serializers.ValidationError(
+                    {"subcategory": "Subcategory must be empty for a product-wise welcome bonus."}
                 )
             if not products:
                 raise serializers.ValidationError(
@@ -1976,7 +1989,11 @@ class WelcomeBonusSerializer(serializers.ModelSerializer):
 
     def get_target_name(self, obj):
         if obj.applicability_type == WelcomeBonus.APPLICABILITY_CATEGORY:
-            return obj.category.name if obj.category else None
+            if not obj.category:
+                return None
+            if obj.subcategory:
+                return f"{obj.category.name} / {obj.subcategory.name}"
+            return obj.category.name
         return list(obj.products.values_list("name", flat=True))
 
     def get_discount_value(self, obj):

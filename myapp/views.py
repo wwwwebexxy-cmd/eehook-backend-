@@ -3340,7 +3340,7 @@ class WelcomeBonusViewSet(viewsets.ModelViewSet):
     serializer_class = WelcomeBonusSerializer
     permission_classes = [IsSuperAdmin]
     filter_backends = [filters.SearchFilter]
-    search_fields = ("name", "products__name", "category__name")
+    search_fields = ("name", "products__name", "category__name", "subcategory__name")
     ordering_fields = (
         "name",
         "applicability_type",
@@ -3353,7 +3353,7 @@ class WelcomeBonusViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = (
-            WelcomeBonus.objects.select_related("category")
+            WelcomeBonus.objects.select_related("category", "subcategory")
             .prefetch_related("products")
             .annotate(
                 assigned_user_count=Count("assignments", distinct=True),
