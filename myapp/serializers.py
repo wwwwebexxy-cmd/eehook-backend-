@@ -1496,6 +1496,7 @@ class HomepageProductSerializer(serializers.ModelSerializer):
     discount_amount = serializers.SerializerMethodField()
     has_offer = serializers.SerializerMethodField()
     discount_percentage = serializers.SerializerMethodField()
+    offer_discount_type = serializers.SerializerMethodField()
     in_stock = serializers.SerializerMethodField()
     default_variant_id = serializers.SerializerMethodField()
     default_variant_unit_id = serializers.SerializerMethodField()
@@ -1518,6 +1519,7 @@ class HomepageProductSerializer(serializers.ModelSerializer):
             "discount_amount",
             "has_offer",
             "discount_percentage",
+            "offer_discount_type",
             "in_stock",
             "default_variant_id",
             "default_variant_unit_id",
@@ -1599,6 +1601,11 @@ class HomepageProductSerializer(serializers.ModelSerializer):
 
     def get_discount_percentage(self, obj):
         return self._price_values(obj)["discount_percentage"]
+
+    def get_offer_discount_type(self, obj):
+        if self._price_values(obj)["has_offer"] and obj.offer:
+            return obj.offer.discount_type
+        return None
 
     def get_in_stock(self, obj):
         return any(choice[3] for choice in self._variant_choices(obj))
