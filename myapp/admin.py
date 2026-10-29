@@ -326,6 +326,7 @@ class AddressAdmin(admin.ModelAdmin):
     list_display = (
         "full_name",
         "city",
+        "emirate",
         "postal_code",
         "country",
         "phone"

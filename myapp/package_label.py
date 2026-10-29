@@ -244,6 +244,7 @@ def render_package_label(order):
             part
             for part in (
                 getattr(address, "city", None) if address else None,
+                getattr(address, "emirate", None) if address else None,
                 getattr(address, "postal_code", None) if address else None,
             )
             if part

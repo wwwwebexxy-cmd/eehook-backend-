@@ -76,6 +76,7 @@ def send_owner_order_email(order_id):
     address_lines = [
         address.address_line if address else "",
         address.city if address else "",
+        address.emirate if address else "",
         address.postal_code if address else "",
         address.country if address else "",
     ]

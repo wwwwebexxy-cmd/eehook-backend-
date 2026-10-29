@@ -910,7 +910,7 @@ class AdminCartViewSet(AdminModelViewSet):
 
 class AdminAddressViewSet(AdminModelViewSet):
     queryset = Address.objects.select_related("user").all().order_by("-created_at")
-    search_fields = ("full_name", "phone", "city", "postal_code", "country", "user__email")
+    search_fields = ("full_name", "phone", "city", "emirate", "postal_code", "country", "user__email")
 
     def get_serializer_class(self):
         class AddressAdminSerializer(serializers.ModelSerializer):

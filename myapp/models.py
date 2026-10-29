@@ -814,6 +814,7 @@ class Address(models.Model):
     city = models.CharField(max_length=100, blank=True,null=True)
     postal_code = models.CharField(max_length=20, blank=True,null=True)
     country = models.CharField(max_length=100, default="New Zealand")
+    emirate = models.CharField(max_length=100, blank=True, null=True)
     is_default = models.BooleanField(default=False)
 
     created_at = models.DateTimeField(auto_now_add=True,null=True)

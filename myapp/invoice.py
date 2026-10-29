@@ -72,7 +72,11 @@ def _address_lines(address):
         getattr(address, "address_line", None),
         ", ".join(
             part
-            for part in (getattr(address, "city", None), getattr(address, "postal_code", None))
+            for part in (
+                getattr(address, "city", None),
+                getattr(address, "emirate", None),
+                getattr(address, "postal_code", None),
+            )
             if part
         ),
         getattr(address, "country", None),
