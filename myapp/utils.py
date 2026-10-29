@@ -2,7 +2,52 @@ from decimal import Decimal
 
 from django.utils import timezone
 
-from .catalog_pricing import get_product_price_values
+def get_offer_for_product(product, variant=None):
+    """Return the active dashboard offer applicable to a product/variant.
+
+    New offers are linked through Offer.products and optionally
+    Offer.variants. An empty variant relation means all variants. The old
+    Product.offer relation remains a fallback for existing integrations and
+    legacy records.
+    """
+    if not product:
+        return None
+
+    from .models import Offer
+
+    product_id = getattr(product, "pk", product)
+    today = timezone.now().date()
+    product_offers = Offer.objects.filter(products__pk=product_id)
+
+    if variant is not None:
+        variant_id = getattr(variant, "pk", variant)
+        selected_offer = (
+            product_offers
+            .filter(variants__pk=variant_id)
+            .filter(is_active=True, start_date__lte=today, end_date__gte=today)
+            .order_by("-created_at", "-pk")
+            .first()
+        )
+        if selected_offer:
+            return selected_offer
+
+    all_variants_offer = (
+        product_offers
+        .filter(variants__isnull=True)
+        .filter(is_active=True, start_date__lte=today, end_date__gte=today)
+        .order_by("-created_at", "-pk")
+        .first()
+    )
+    if all_variants_offer:
+        return all_variants_offer
+
+    # If this product already has new dashboard offers, do not let a stale
+    # legacy Product.offer leak onto a variant excluded from those offers.
+    if product_offers.exists():
+        return None
+
+    legacy_offer = getattr(product, "offer", None)
+    return legacy_offer if is_offer_valid(legacy_offer) else None
 
 
 def coupon_applies_to_product(coupon, product):
@@ -194,7 +239,24 @@ def calculate_order_total(subtotal, shipping_fee=0):
     
 def get_product_prices(product):
 
-    prices = get_product_price_values(product)
+    entries = []
+    for variant in product.variants.all():
+        if variant.price_type == "single":
+            if variant.price is not None:
+                price = Decimal(str(variant.price))
+                entries.append((price, get_offer_for_product(product, variant)))
+            continue
+
+        entries.extend(
+            (
+                Decimal(str(unit.price)),
+                get_offer_for_product(product, variant),
+            )
+            for unit in variant.sizes.all()
+            if unit.price is not None
+        )
+
+    prices = [price for price, _offer in entries]
 
     if not prices:
 
@@ -209,24 +271,19 @@ def get_product_prices(product):
         }
 
     starting_price = min(prices)
-
-    discounted_price = calculate_offer_price(
-        starting_price,
-        product.offer
+    discounted_entries = [
+        (price, calculate_offer_price(price, offer), offer)
+        for price, offer in entries
+    ]
+    original_price, discounted_price, best_offer = min(
+        discounted_entries,
+        key=lambda entry: (entry[1], entry[0]),
     )
-
-    discount_amount = calculate_discount_amount(
-        starting_price,
-        product.offer
-    )
-
-    has_offer = is_offer_valid(
-        product.offer
-    )
-
+    discount_amount = max(original_price - discounted_price, Decimal("0.00"))
+    has_offer = any(is_offer_valid(offer) for _price, offer in entries)
     discount_percentage = (
-        get_offer_discount_percentage(starting_price, product.offer)
-        if has_offer
+        get_offer_discount_percentage(original_price, best_offer)
+        if is_offer_valid(best_offer)
         else Decimal("0.00")
     )
 

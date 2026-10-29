@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 
 from rest_framework import serializers
@@ -251,7 +252,7 @@ class ProductVariantUnitSerializer(
 
         return calculate_offer_price(
             obj.price or 0,
-            obj.variant.product.offer
+            get_offer_for_product(obj.variant.product, obj.variant),
         )
 
     def get_discount_amount(
@@ -261,7 +262,7 @@ class ProductVariantUnitSerializer(
 
         return calculate_discount_amount(
             obj.price or 0,
-            obj.variant.product.offer
+            get_offer_for_product(obj.variant.product, obj.variant),
         )
 
     def get_has_offer(
@@ -269,21 +270,18 @@ class ProductVariantUnitSerializer(
         obj
     ):
 
-        return is_offer_valid(
-            obj.variant.product.offer
-        )
+        return is_offer_valid(get_offer_for_product(obj.variant.product, obj.variant))
 
     def get_discount_percentage(
         self,
         obj
     ):
 
-        if is_offer_valid(
-            obj.variant.product.offer
-        ):
+        offer = get_offer_for_product(obj.variant.product, obj.variant)
+        if is_offer_valid(offer):
             return get_offer_discount_percentage(
                 obj.price or 0,
-                obj.variant.product.offer,
+                offer,
             )
 
         return 0     
@@ -330,20 +328,21 @@ class ProductVariantSerializer(serializers.ModelSerializer):
 
     def get_discounted_price(self, obj):
         if obj.price_type == "single" and obj.price is not None:
-            return calculate_offer_price(obj.price, obj.product.offer)
+            return calculate_offer_price(obj.price, get_offer_for_product(obj.product, obj))
         return None
 
     def get_discount_amount(self, obj):
         if obj.price_type == "single" and obj.price is not None:
-            return calculate_discount_amount(obj.price, obj.product.offer)
+            return calculate_discount_amount(obj.price, get_offer_for_product(obj.product, obj))
         return None
 
     def get_has_offer(self, obj):
-        return is_offer_valid(obj.product.offer)
+        return is_offer_valid(get_offer_for_product(obj.product, obj))
 
     def get_discount_percentage(self, obj):
-        if is_offer_valid(obj.product.offer):
-            return get_offer_discount_percentage(obj.price or 0, obj.product.offer)
+        offer = get_offer_for_product(obj.product, obj)
+        if is_offer_valid(offer):
+            return get_offer_discount_percentage(obj.price or 0, offer)
         return 0
 
 
@@ -550,7 +549,7 @@ class CartSerializer(serializers.ModelSerializer):
         price = (obj.variant.price or 0) if obj.variant.price_type == "single" else ((obj.variant_unit.price or 0) if obj.variant_unit else 0)
         dp = calculate_offer_price(
             price,
-            obj.variant.product.offer
+            get_offer_for_product(obj.variant.product, obj.variant),
         )
         welcome_bonus = get_eligible_welcome_bonus_assignment(
             getattr(obj, "welcome_bonus_assignment_id", None),
@@ -577,7 +576,7 @@ class CartSerializer(serializers.ModelSerializer):
         self,
         obj
     ):
-        has_prod = is_offer_valid(obj.variant.product.offer)
+        has_prod = is_offer_valid(get_offer_for_product(obj.variant.product, obj.variant))
         has_promotion = bool(
             get_eligible_welcome_bonus_assignment(
                 getattr(obj, "welcome_bonus_assignment_id", None),
@@ -593,7 +592,10 @@ class CartSerializer(serializers.ModelSerializer):
         obj
     ):
         price = (obj.variant.price or 0) if obj.variant.price_type == "single" else ((obj.variant_unit.price or 0) if obj.variant_unit else 0)
-        p_pct = get_offer_discount_percentage(price, obj.variant.product.offer)
+        p_pct = get_offer_discount_percentage(
+            price,
+            get_offer_for_product(obj.variant.product, obj.variant),
+        )
         welcome_bonus = get_eligible_welcome_bonus_assignment(
             getattr(obj, "welcome_bonus_assignment_id", None),
             obj.user,
@@ -736,6 +738,16 @@ class AddressSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
         
 class OfferSerializer(serializers.ModelSerializer):
+    products = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=Product.objects.all(),
+        required=False,
+    )
+    variants = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=ProductVariant.objects.all(),
+        required=False,
+    )
     discount_value = serializers.SerializerMethodField(read_only=True)
     discount_type_label = serializers.CharField(
         source="get_discount_type_display",
@@ -757,12 +769,31 @@ class OfferSerializer(serializers.ModelSerializer):
             "start_date",
             "end_date",
             "is_active",
+            "products",
+            "variants",
             "created_at",
         )
         read_only_fields = ("id", "discount_type_label", "discount_value", "created_at")
 
     def to_internal_value(self, data):
-        data = data.copy()
+        if hasattr(data, "getlist"):
+            data = {
+                key: values if len(values := data.getlist(key)) > 1 else values[0]
+                for key in data.keys()
+            }
+        else:
+            data = data.copy()
+        for relation_name in ("products", "variants"):
+            value = data.get(relation_name)
+            if isinstance(value, str):
+                if not value.strip():
+                    data[relation_name] = []
+                else:
+                    try:
+                        parsed = json.loads(value)
+                    except (TypeError, ValueError):
+                        parsed = [value]
+                    data[relation_name] = parsed if isinstance(parsed, list) else [parsed]
         if "discount_type" in data:
             discount_type = str(data["discount_type"]).upper()
             if discount_type in {"FIXED_AMOUNT", "FIXED AMOUNT"}:
@@ -786,6 +817,28 @@ class OfferSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         instance = self.instance
+        products = attrs.get(
+            "products",
+            list(instance.products.all()) if instance else [],
+        )
+        variants = attrs.get(
+            "variants",
+            list(instance.variants.all()) if instance else [],
+        )
+        if not products:
+            raise serializers.ValidationError(
+                {"products": "Select at least one product for this offer."}
+            )
+        product_ids = {product.id for product in products}
+        invalid_variants = [
+            variant.id
+            for variant in variants
+            if variant.product_id not in product_ids
+        ]
+        if invalid_variants:
+            raise serializers.ValidationError(
+                {"variants": "Selected variants must belong to the selected product."}
+            )
         discount_type = attrs.get(
             "discount_type",
             getattr(instance, "discount_type", Offer.DISCOUNT_PERCENTAGE),
@@ -1219,7 +1272,7 @@ class WishlistSerializer(serializers.ModelSerializer):
         price = (obj.variant.price or 0) if obj.variant.price_type == "single" else ((obj.variant_unit.price or 0) if obj.variant_unit else 0)
         return calculate_offer_price(
             price,
-            obj.variant.product.offer
+            get_offer_for_product(obj.variant.product, obj.variant),
         )
 
     def get_discount_amount(self, obj):
@@ -1228,7 +1281,7 @@ class WishlistSerializer(serializers.ModelSerializer):
         price = (obj.variant.price or 0) if obj.variant.price_type == "single" else ((obj.variant_unit.price or 0) if obj.variant_unit else 0)
         return calculate_discount_amount(
             price,
-            obj.variant.product.offer
+            get_offer_for_product(obj.variant.product, obj.variant),
         )
 
     def get_has_offer(self, obj):
@@ -1236,20 +1289,17 @@ class WishlistSerializer(serializers.ModelSerializer):
         if not obj.variant:
             return False
 
-        return is_offer_valid(
-            obj.variant.product.offer
-        )
+        return is_offer_valid(get_offer_for_product(obj.variant.product, obj.variant))
 
     def get_discount_percentage(self, obj):
 
         if not obj.variant:
             return 0
 
-        if is_offer_valid(
-            obj.variant.product.offer
-        ):
+        offer = get_offer_for_product(obj.variant.product, obj.variant)
+        if is_offer_valid(offer):
             price = (obj.variant.price or 0) if obj.variant.price_type == "single" else ((obj.variant_unit.price or 0) if obj.variant_unit else 0)
-            return get_offer_discount_percentage(price, obj.variant.product.offer)
+            return get_offer_discount_percentage(price, offer)
 
         return 0
         
@@ -1332,9 +1382,7 @@ class ProductSerializer(serializers.ModelSerializer):
         read_only=True
     )
 
-    offer = OfferSerializer(
-        read_only=True
-    )
+    offer = serializers.SerializerMethodField()
 
     variants = ProductVariantSerializer(
         many=True,
@@ -1400,6 +1448,10 @@ class ProductSerializer(serializers.ModelSerializer):
         return get_product_prices(
             obj
         )["starting_price"]
+
+    def get_offer(self, obj):
+        offer = get_offer_for_product(obj)
+        return OfferSerializer(offer, context=self.context).data if offer else None
 
     def get_discounted_price(
         self,
@@ -1603,8 +1655,9 @@ class HomepageProductSerializer(serializers.ModelSerializer):
         return self._price_values(obj)["discount_percentage"]
 
     def get_offer_discount_type(self, obj):
-        if self._price_values(obj)["has_offer"] and obj.offer:
-            return obj.offer.discount_type
+        offer = get_offer_for_product(obj)
+        if self._price_values(obj)["has_offer"] and offer:
+            return offer.discount_type
         return None
 
     def get_in_stock(self, obj):

@@ -141,7 +141,6 @@ class AdminProductSerializer(serializers.ModelSerializer):
             "category",
             "subcategory",
             "brand",
-            "offer",
             "name",
             "description",
             "is_active",
@@ -516,7 +515,7 @@ class AdminSubCategoryViewSet(AdminModelViewSet):
 
 
 class AdminOfferViewSet(AdminModelViewSet):
-    queryset = Offer.objects.all().order_by("-created_at")
+    queryset = Offer.objects.prefetch_related("products", "variants__color").all().order_by("-created_at")
     search_fields = ("title", "description")
     serializer_class = OfferSerializer
 

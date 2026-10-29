@@ -137,6 +137,19 @@ class Offer(models.Model):
     end_date = models.DateField()
     is_active = models.BooleanField( default=True)
     created_at = models.DateTimeField( auto_now_add=True)
+    # New offers are created from the Offer dashboard and target a product
+    # directly. An empty variants relation means all variants of the selected
+    # product; populated variants limit the offer to those variants.
+    products = models.ManyToManyField(
+        "Product",
+        related_name="offers",
+        blank=True,
+    )
+    variants = models.ManyToManyField(
+        "ProductVariant",
+        related_name="offers",
+        blank=True,
+    )
 
     class Meta:
         constraints = (

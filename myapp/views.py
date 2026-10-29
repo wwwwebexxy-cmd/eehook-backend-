@@ -72,6 +72,7 @@ from .utils import (
     SearchRateThrottle,
     calculate_cart_shipping,
     calculate_order_total,
+    get_offer_for_product,
 )
 from .auth_cookies import auth_cookie_names, clear_auth_cookies, normalize_auth_scope, set_auth_cookies
 from .authentication import enforce_csrf
@@ -1638,7 +1639,7 @@ def get_cart(request):
         price = (item.variant.price or 0) if item.variant.price_type == "single" else ((item.variant_unit.price or 0) if item.variant_unit else 0)
         discounted_price = calculate_offer_price(
             price,
-            item.variant.product.offer
+            get_offer_for_product(item.variant.product, item.variant)
         )
         source, promotion = current_promotions.get(item.id, (None, None))
         if promotion:
@@ -1731,7 +1732,7 @@ def update_cart_quantity(request, id):
     )
     discounted_price = calculate_offer_price(
         original_price or 0,
-        cart.variant.product.offer
+        get_offer_for_product(cart.variant.product, cart.variant)
     )
     if current_promotion:
         discounted_price = _apply_cart_promotion_price(
@@ -1769,7 +1770,7 @@ def update_cart_quantity(request, id):
         )
         item_discounted_price = calculate_offer_price(
             item_price or 0,
-            item.variant.product.offer,
+            get_offer_for_product(item.variant.product, item.variant),
         )
         if item_promotion:
             item_discounted_price = _apply_cart_promotion_price(
@@ -1932,7 +1933,7 @@ def place_order(request):
 
         discounted_price = calculate_offer_price(
             original_price,
-            item.variant.product.offer
+            get_offer_for_product(item.variant.product, item.variant)
         )
         promotion_source, current_promotion = _refresh_cart_promotion(item)
         if current_promotion:
@@ -1997,7 +1998,7 @@ def place_order(request):
 
         discounted_price = calculate_offer_price(
             original_price,
-            item.variant.product.offer
+            get_offer_for_product(item.variant.product, item.variant)
         )
         promotion_source, current_promotion = _refresh_cart_promotion(item)
         if current_promotion:
@@ -2169,8 +2170,8 @@ def offer_products(request):
         return Response([])
 
     products = Product.objects.filter(
-        offer=offer
-    )
+        Q(offers=offer) | Q(offer=offer)
+    ).distinct()
 
     serializer = ProductSerializer(
         products,
