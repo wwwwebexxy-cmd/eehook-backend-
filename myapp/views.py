@@ -2155,7 +2155,7 @@ def offer_products(request):
 
     today = timezone.now().date()
 
-    offer = Offer.objects.filter(
+    active_offers = Offer.objects.filter(
 
         is_active=True,
 
@@ -2163,15 +2163,26 @@ def offer_products(request):
 
         end_date__gte=today
 
-    ).first()
+    ).order_by("-created_at", "-pk")
+
+    offer = active_offers.first()
 
     if not offer:
 
         return Response([])
 
     products = Product.objects.filter(
-        Q(offers=offer) | Q(offer=offer)
-    ).distinct()
+        Q(offers__in=active_offers) | Q(offer__in=active_offers)
+    ).select_related(
+        "category",
+        "subcategory",
+        "brand",
+    ).prefetch_related(
+        "variants__color",
+        "variants__images",
+        "variants__sizes__unit_type",
+        "variants__sizes__unit",
+    ).distinct().order_by("pk")
 
     serializer = ProductSerializer(
         products,

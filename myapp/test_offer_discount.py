@@ -5,12 +5,13 @@ from io import BytesIO
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.http import QueryDict
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
 from PIL import Image
 
 from .models import Category, Offer, Product, ProductVariant, SubCategory
 from .serializers import OfferSerializer
 from .utils import calculate_discount_amount, calculate_offer_price, get_offer_for_product, get_product_prices
+from .views import offer_products
 
 
 class OfferDiscountTests(TestCase):
@@ -132,3 +133,39 @@ class OfferDiscountTests(TestCase):
         offer = serializer.save()
         self.assertEqual(list(offer.products.values_list("id", flat=True)), [self.product.id])
         self.assertFalse(offer.variants.exists())
+
+    def test_offer_products_returns_products_from_all_active_offers_with_all_variants(self):
+        second_product = Product.objects.create(
+            category=self.category,
+            subcategory=self.subcategory,
+            name="Second offer product",
+            description="Second offer product description",
+        )
+        second_variant = ProductVariant.objects.create(
+            product=second_product,
+            price_type="single",
+            price=Decimal("300.00"),
+            stock=10,
+        )
+
+        first_offer = self.offer(title="First active offer")
+        first_offer.products.add(self.product)
+        second_offer = self.offer(title="Second active offer")
+        second_offer.products.add(second_product)
+
+        response = offer_products(RequestFactory().get("/offer-products/"))
+
+        self.assertEqual(response.status_code, 200)
+        products = response.data["products"]
+        product_ids = {item["id"] for item in products}
+        self.assertEqual(product_ids, {self.product.id, second_product.id})
+
+        variants_by_product = {
+            item["id"]: {variant["id"] for variant in item["variants"]}
+            for item in products
+        }
+        self.assertEqual(
+            variants_by_product[self.product.id],
+            {self.variant_one.id, self.variant_two.id},
+        )
+        self.assertEqual(variants_by_product[second_product.id], {second_variant.id})
