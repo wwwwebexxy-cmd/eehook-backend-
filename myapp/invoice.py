@@ -177,6 +177,9 @@ def _item_description(item):
         if unit_type:
             unit_text = f"{_clean(unit_type.name)}: {unit_text}"
         details.append(unit_text)
+    grade = _clean(getattr(variant_unit, "grade", None), "") if variant_unit else ""
+    if grade:
+        details.append(f"Grade: {grade}")
     return product_name if not details else f"{product_name}<br/>{escape(' | '.join(details))}"
 
 

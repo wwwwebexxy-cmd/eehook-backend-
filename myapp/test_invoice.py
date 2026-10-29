@@ -4,7 +4,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from .invoice import _invoice_lines, render_tax_invoice
-from .models import Address, Category, Order, OrderItem, Product, ProductVariant, SubCategory, User
+from .models import Address, Category, Order, OrderItem, Product, ProductVariant, ProductVariantUnit, SubCategory, Unit, UnitType, User
 from .package_label import _item_context
 
 
@@ -79,6 +79,39 @@ class TaxInvoiceTests(TestCase):
     def test_package_label_context_includes_product_sku(self):
         item = self.order.items.first()
         self.assertEqual(_item_context(item)["sku"], "INV-TEST-001")
+
+    def test_grade_is_in_invoice_and_package_label_context_when_present(self):
+        unit_type = UnitType.objects.create(name="Grade Size")
+        unit = Unit.objects.create(unit_type=unit_type, name="Standard")
+        variant = ProductVariant.objects.create(
+            product=self.order.items.first().product,
+            sku="INV-GRADE-VARIANT",
+            price_type="multiple",
+            stock=2,
+        )
+        variant_unit = ProductVariantUnit.objects.create(
+            variant=variant,
+            unit_type=unit_type,
+            unit=unit,
+            sku="INV-GRADE-UNIT",
+            grade="A+",
+            price="105.00",
+            stock=2,
+        )
+        item = OrderItem.objects.create(
+            order=self.order,
+            product=variant.product,
+            variant_unit=variant_unit,
+            unit=unit,
+            quantity=1,
+            original_price="105.00",
+            price="105.00",
+            total_price="105.00",
+        )
+
+        invoice_row = next(row for row in _invoice_lines(self.order) if row["sku"] == "INV-GRADE-UNIT")
+        self.assertIn("Grade: A+", invoice_row["description"])
+        self.assertEqual(_item_context(item)["grade"], "A+")
 
     def test_render_tax_invoice_uses_tax_inclusive_totals(self):
         pdf = render_tax_invoice(self.order)

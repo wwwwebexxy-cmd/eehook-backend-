@@ -114,6 +114,7 @@ def _item_context(item):
     return {
         "name": product_name,
         "sku": _clean(resolve_order_item_sku(item)),
+        "grade": _clean(getattr(variant_unit, "grade", None)) if variant_unit else "—",
         "size": size_label,
         "unit_type": unit_type_label,
         "weight": weight,
@@ -177,16 +178,17 @@ def _draw_logo(pdf, x, y, width=72, height=62):
 
     # Keep a small fallback for environments where the bundled image is not
     # present yet (for example, an older deployment during a rolling update).
+    scale = min(width / 78, height / 70)
     pdf.setFillColor(ORANGE)
-    pdf.rect(x + 27, y + 47, 25, 25, fill=1, stroke=0)
-    pdf.rect(x + 15, y + 55, 17, 7, fill=1, stroke=0)
-    pdf.rect(x + 15, y + 42, 17, 7, fill=1, stroke=0)
+    pdf.rect(x + 27 * scale, y + 47 * scale, 25 * scale, 25 * scale, fill=1, stroke=0)
+    pdf.rect(x + 15 * scale, y + 55 * scale, 17 * scale, 7 * scale, fill=1, stroke=0)
+    pdf.rect(x + 15 * scale, y + 42 * scale, 17 * scale, 7 * scale, fill=1, stroke=0)
     pdf.setFillColor(HexColor("#4f6973"))
-    pdf.setFont("Helvetica-Bold", 19)
-    pdf.drawString(x + 3, y + 22, "eehook")
+    pdf.setFont("Helvetica-Bold", 19 * scale)
+    pdf.drawString(x + 3 * scale, y + 22 * scale, "eehook")
     pdf.setFillColor(ORANGE)
-    pdf.setFont("Helvetica-Oblique", 6)
-    pdf.drawRightString(x + 73, y + 13, "Seriously Different")
+    pdf.setFont("Helvetica-Oblique", 6 * scale)
+    pdf.drawRightString(x + 73 * scale, y + 13 * scale, "Seriously Different")
 
 
 def _draw_barcode(pdf, value, x, y, width_limit, height, bar_width=0.8, human=True):
@@ -197,8 +199,10 @@ def _draw_barcode(pdf, value, x, y, width_limit, height, bar_width=0.8, human=Tr
         humanReadable=human,
     )
     scale = min(1, width_limit / max(float(barcode.width), 1))
+    rendered_width = float(barcode.width) * scale
+    centered_x = x + max(0, (width_limit - rendered_width) / 2)
     pdf.saveState()
-    pdf.translate(x, y)
+    pdf.translate(centered_x, y)
     if scale < 1:
         pdf.scale(scale, 1)
     barcode.drawOn(pdf, 0, 0)
@@ -211,7 +215,7 @@ def _draw_barcode_box(pdf, value, x, y, width, height, barcode_height, human=Tru
     pdf.saveState()
     pdf.setFillColor(HexColor("#fbfcfa"))
     pdf.setStrokeColor(HexColor("#dfe7e3"))
-    pdf.setLineWidth(0.7)
+    pdf.setLineWidth(0.5)
     pdf.roundRect(x, y, width, height, 3, fill=1, stroke=1)
     pdf.restoreState()
     _draw_barcode(
@@ -276,7 +280,8 @@ def render_package_label(order):
     # small barcode row for every ordered product. Reserve that row even for a
     # single-item order, then grow the strip for additional products and
     # wrapped package values.
-    extra_height = 47 + max(0, len(items) - 1) * 47 + package_info_extra_height
+    grade_extra_height = sum(10 for context in contexts if context["grade"] != "—")
+    extra_height = 47 + max(0, len(items) - 1) * 47 + grade_extra_height + package_info_extra_height
     page_height = BASE_PAGE_HEIGHT + extra_height
 
     stream = BytesIO()
@@ -301,7 +306,23 @@ def render_package_label(order):
     ship_to_column_right = 250
     pdf.line(logo_column_right, top_bottom, logo_column_right, top)
     pdf.line(ship_to_column_right, top_bottom, ship_to_column_right, top)
-    _draw_logo(pdf, 8, top_bottom + 8, width=78, height=70)
+    logo_box_x = 16
+    logo_box_y = top_bottom + 16
+    logo_box_width = 66
+    logo_box_height = 62
+    pdf.setFillColor(white)
+    pdf.setStrokeColor(HexColor("#dfe7e3"))
+    pdf.setLineWidth(0.6)
+    pdf.roundRect(
+        logo_box_x,
+        logo_box_y,
+        logo_box_width,
+        logo_box_height,
+        3,
+        fill=1,
+        stroke=1,
+    )
+    _draw_logo(pdf, logo_box_x + 4, logo_box_y + 5, width=logo_box_width - 8, height=logo_box_height - 10)
     x = logo_column_right + 10
     y = _draw_section_header(pdf, "SHIP TO", x, top - 17, 140)
     pdf.setFont("Helvetica-Bold", 10.5)
@@ -372,16 +393,22 @@ def render_package_label(order):
     item_row_width = PAGE_WIDTH - margin - x - 8
     for index, (item, context) in enumerate(zip(items, contexts), start=1):
         item_code = f"{package_code}-P{index:02d}"
-        row_bottom = y - 39
+        has_grade = context["grade"] != "—"
+        row_height = 54 if has_grade else 44
+        row_bottom = y - (row_height - 5)
         pdf.setFillColor(HexColor("#fbfcfa"))
         pdf.setStrokeColor(HexColor("#dfe7e3"))
         pdf.setLineWidth(0.7)
-        pdf.roundRect(x, row_bottom, item_row_width, 44, 3, fill=1, stroke=1)
+        pdf.roundRect(x, row_bottom, item_row_width, row_height, 3, fill=1, stroke=1)
         pdf.setFillColor(INK)
         pdf.setFont("Helvetica", 6.8)
         pdf.drawString(x + 6, y, _truncate(f"{item.quantity} × {context['name']}", 35))
         pdf.setFont("Helvetica", 6.4)
-        pdf.drawString(x + 6, y - 11, _truncate(f"SKU: {context['sku']}", 24))
+        details_y = y - 11
+        if has_grade:
+            pdf.drawString(x + 6, details_y, _truncate(f"Grade: {context['grade']}", 24))
+            details_y -= 10
+        pdf.drawString(x + 6, details_y, _truncate(f"SKU: {context['sku']}", 24))
         _draw_barcode(
             pdf,
             item_code,
@@ -393,8 +420,8 @@ def render_package_label(order):
             human=False,
         )
         pdf.setFont("Helvetica", 6.4)
-        pdf.drawString(x + 112, y - 11, item_code)
-        y -= 47
+        pdf.drawString(x + 112, details_y, item_code)
+        y -= row_height + 3
 
     collection_label = (
         "COD / WHATSAPP ORDER" if order.payment_method in ("COD", "WHATSAPP") else "PREPAID ORDER"
