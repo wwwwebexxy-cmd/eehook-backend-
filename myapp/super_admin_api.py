@@ -328,6 +328,7 @@ class AdminProductVariantUnitSerializer(serializers.ModelSerializer):
             "unit_type",
             "unit",
             "sku",
+            "grade",
             "generate_sku",
             "price",
             "stock",
@@ -671,6 +672,7 @@ class AdminProductViewSet(AdminModelViewSet):
                         variant=variant,
                         unit_type=source_unit.unit_type,
                         unit=source_unit.unit,
+                        grade=source_unit.grade,
                         price=source_unit.price,
                         stock=source_unit.stock,
                     )

@@ -237,6 +237,7 @@ class ProductVariantUnitSerializer(
             "id",
             "size",
             "sku",
+            "grade",
             "price",
             "discounted_price",
             "discount_amount",

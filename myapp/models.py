@@ -617,6 +617,7 @@ class ProductVariantUnit(models.Model):
     unit_type = models.ForeignKey(UnitType, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Unit (e.g. GB/KG)")
     unit = models.ForeignKey( Unit,  on_delete=models.CASCADE, null=True, blank=True, verbose_name="Quantity (e.g. 128, 1)")
     sku = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    grade = models.CharField(max_length=100, blank=True, default="")
     price = models.DecimalField( max_digits=10,decimal_places=2)
     stock = models.PositiveIntegerField( default=0)
 

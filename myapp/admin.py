@@ -110,7 +110,7 @@ class ProductVariantSizeInline( nested_admin.NestedTabularInline):
 
     model = ProductVariantUnit
     extra = 1
-    fields = ('unit_type', 'unit', 'sku', 'price', 'stock')
+    fields = ('unit_type', 'unit', 'sku', 'grade', 'price', 'stock')
 
 class ProductVariantForm(forms.ModelForm):
     class Meta:
