@@ -15,6 +15,8 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 
+from .sku import resolve_order_item_sku
+
 
 PAGE_WIDTH, BASE_PAGE_HEIGHT = landscape(A6)
 ORANGE = HexColor("#ff9000")
@@ -111,6 +113,7 @@ def _item_context(item):
         product_name = f"{product_name} · {_clean(item.color.name)}"
     return {
         "name": product_name,
+        "sku": _clean(resolve_order_item_sku(item)),
         "size": size_label,
         "unit_type": unit_type_label,
         "weight": weight,
@@ -272,7 +275,7 @@ def render_package_label(order):
     # small barcode row for every ordered product. Reserve that row even for a
     # single-item order, then grow the strip for additional products and
     # wrapped package values.
-    extra_height = 36 + max(0, len(items) - 1) * 34 + package_info_extra_height
+    extra_height = 47 + max(0, len(items) - 1) * 47 + package_info_extra_height
     page_height = BASE_PAGE_HEIGHT + extra_height
 
     stream = BytesIO()
@@ -368,14 +371,16 @@ def render_package_label(order):
     item_row_width = PAGE_WIDTH - margin - x - 8
     for index, (item, context) in enumerate(zip(items, contexts), start=1):
         item_code = f"{package_code}-P{index:02d}"
-        row_bottom = y - 26
+        row_bottom = y - 39
         pdf.setFillColor(HexColor("#fbfcfa"))
         pdf.setStrokeColor(HexColor("#dfe7e3"))
         pdf.setLineWidth(0.7)
-        pdf.roundRect(x, row_bottom, item_row_width, 31, 3, fill=1, stroke=1)
+        pdf.roundRect(x, row_bottom, item_row_width, 44, 3, fill=1, stroke=1)
         pdf.setFillColor(INK)
         pdf.setFont("Helvetica", 6.8)
         pdf.drawString(x + 6, y, _truncate(f"{item.quantity} × {context['name']}", 35))
+        pdf.setFont("Helvetica", 6.4)
+        pdf.drawString(x + 6, y - 11, _truncate(f"SKU: {context['sku']}", 24))
         _draw_barcode(
             pdf,
             item_code,
@@ -388,7 +393,7 @@ def render_package_label(order):
         )
         pdf.setFont("Helvetica", 6.4)
         pdf.drawString(x + 112, y - 11, item_code)
-        y -= 34
+        y -= 47
 
     collection_label = (
         "COD / WHATSAPP ORDER" if order.payment_method in ("COD", "WHATSAPP") else "PREPAID ORDER"

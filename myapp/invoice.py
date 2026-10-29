@@ -16,6 +16,8 @@ from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Paragraph, Table, TableStyle
 
+from .sku import resolve_order_item_sku
+
 
 VAT_RATE = Decimal("0.05")
 PAGE_WIDTH, BASE_PAGE_HEIGHT = portrait((216 * mm, 303 * mm))
@@ -151,16 +153,7 @@ def _draw_block(pdf, title, lines, x, y, width, title_size=9.5, line_size=8.5, l
 
 
 def _item_sku(item):
-    variant_unit = getattr(item, "variant_unit", None)
-    if variant_unit and variant_unit.sku:
-        return _clean(variant_unit.sku)
-    product = getattr(item, "product", None)
-    if not product:
-        return "-"
-    variants = product.variants
-    variant = variants.filter(color_id=item.color_id).first() if item.color_id else None
-    variant = variant or variants.filter(color__isnull=True).first() or variants.first()
-    return _clean(getattr(variant, "sku", None)) if variant else "-"
+    return _clean(resolve_order_item_sku(item), "-")
 
 
 def _item_description(item):

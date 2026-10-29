@@ -5,6 +5,7 @@ from rest_framework.test import APIClient
 
 from .invoice import _invoice_lines, render_tax_invoice
 from .models import Address, Category, Order, OrderItem, Product, ProductVariant, SubCategory, User
+from .package_label import _item_context
 
 
 class TaxInvoiceTests(TestCase):
@@ -74,6 +75,10 @@ class TaxInvoiceTests(TestCase):
         self.assertEqual(delivery_row["tax_rate"], "0.00")
         self.assertEqual(delivery_row["vat"], Decimal("0.00"))
         self.assertEqual(delivery_row["net_total"], Decimal("10.00"))
+
+    def test_package_label_context_includes_product_sku(self):
+        item = self.order.items.first()
+        self.assertEqual(_item_context(item)["sku"], "INV-TEST-001")
 
     def test_render_tax_invoice_uses_tax_inclusive_totals(self):
         pdf = render_tax_invoice(self.order)

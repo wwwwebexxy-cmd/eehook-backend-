@@ -53,6 +53,7 @@ from .models import (
     Wishlist,
     WelcomeBonus,
 )
+from .sku import assign_generated_variant_sku, assign_generated_variant_unit_sku
 from .permissions import IsSuperAdmin
 from .catalog_pricing import get_product_price_values
 from .serializers import CouponSerializer, OfferSerializer
@@ -247,10 +248,25 @@ class AdminProductSerializer(serializers.ModelSerializer):
 
 
 class AdminProductVariantSerializer(serializers.ModelSerializer):
+    generate_sku = serializers.BooleanField(write_only=True, required=False, default=False)
+
     class Meta:
         model = ProductVariant
-        fields = ("id", "product", "color", "sku", "price_type", "price", "stock")
+        fields = (
+            "id",
+            "product",
+            "color",
+            "sku",
+            "generate_sku",
+            "price_type",
+            "price",
+            "stock",
+        )
         read_only_fields = ("id",)
+
+    def validate_sku(self, value):
+        value = value.strip() if isinstance(value, str) else value
+        return value or None
 
     def validate(self, attrs):
         if "regions" in self.initial_data:
@@ -283,24 +299,45 @@ class AdminProductVariantSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
+        generate_sku = validated_data.pop("generate_sku", False)
         instance = ProductVariant(**validated_data)
         instance.full_clean()
         instance.save()
+        if generate_sku and not instance.sku:
+            assign_generated_variant_sku(instance)
         return instance
 
     def update(self, instance, validated_data):
+        generate_sku = validated_data.pop("generate_sku", False)
         for field, value in validated_data.items():
             setattr(instance, field, value)
         instance.full_clean()
         instance.save()
+        if generate_sku and not instance.sku:
+            assign_generated_variant_sku(instance)
         return instance
 
 
 class AdminProductVariantUnitSerializer(serializers.ModelSerializer):
+    generate_sku = serializers.BooleanField(write_only=True, required=False, default=False)
+
     class Meta:
         model = ProductVariantUnit
-        fields = ("id", "variant", "unit_type", "unit", "sku", "price", "stock")
+        fields = (
+            "id",
+            "variant",
+            "unit_type",
+            "unit",
+            "sku",
+            "generate_sku",
+            "price",
+            "stock",
+        )
         read_only_fields = ("id",)
+
+    def validate_sku(self, value):
+        value = value.strip() if isinstance(value, str) else value
+        return value or None
 
     def validate(self, attrs):
         unit = attrs.get("unit", getattr(self.instance, "unit", None))
@@ -325,16 +362,22 @@ class AdminProductVariantUnitSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
+        generate_sku = validated_data.pop("generate_sku", False)
         instance = ProductVariantUnit(**validated_data)
         instance.full_clean()
         instance.save()
+        if generate_sku and not instance.sku:
+            assign_generated_variant_unit_sku(instance)
         return instance
 
     def update(self, instance, validated_data):
+        generate_sku = validated_data.pop("generate_sku", False)
         for field, value in validated_data.items():
             setattr(instance, field, value)
         instance.full_clean()
         instance.save()
+        if generate_sku and not instance.sku:
+            assign_generated_variant_unit_sku(instance)
         return instance
 
 
