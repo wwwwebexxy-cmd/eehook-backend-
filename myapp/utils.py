@@ -264,10 +264,13 @@ def get_product_prices(product):
 
         return {
             "starting_price": zero,
+            "original_price": zero,
             "discounted_price": zero,
             "discount_amount": zero,
             "has_offer": False,
             "discount_percentage": 0,
+            "offer_discount_type": None,
+            "offer_discount_value": None,
         }
 
     starting_price = min(prices)
@@ -291,6 +294,9 @@ def get_product_prices(product):
         "starting_price": starting_price.quantize(
             Decimal("0.01")
         ),
+        "original_price": original_price.quantize(
+            Decimal("0.01")
+        ),
         "discounted_price": discounted_price.quantize(
             Decimal("0.01")
         ),
@@ -299,6 +305,14 @@ def get_product_prices(product):
         ),
         "has_offer": has_offer,
         "discount_percentage": discount_percentage,
+        "offer_discount_type": best_offer.discount_type if is_offer_valid(best_offer) else None,
+        "offer_discount_value": (
+            best_offer.fixed_amount
+            if is_offer_valid(best_offer) and best_offer.discount_type == "FIXED"
+            else best_offer.discount_percentage
+            if is_offer_valid(best_offer)
+            else None
+        ),
     }
 from rest_framework.throttling import SimpleRateThrottle
 

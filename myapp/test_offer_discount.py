@@ -9,7 +9,7 @@ from django.test import RequestFactory, TestCase
 from PIL import Image
 
 from .models import Category, Offer, Product, ProductVariant, SubCategory
-from .serializers import OfferSerializer
+from .serializers import OfferSerializer, ProductSerializer
 from .utils import calculate_discount_amount, calculate_offer_price, get_offer_for_product, get_product_prices
 from .views import offer_products
 
@@ -60,6 +60,27 @@ class OfferDiscountTests(TestCase):
         self.assertEqual(calculate_discount_amount(Decimal("100.00"), offer), Decimal("25.00"))
         self.assertEqual(calculate_offer_price(Decimal("100.00"), offer), Decimal("75.00"))
         self.assertEqual(offer.fixed_amount, Decimal("25.00"))
+
+    def test_fixed_offer_type_is_exposed_for_product_and_variant_cards(self):
+        offer = self.offer(
+            discount_type=Offer.DISCOUNT_FIXED,
+            discount_percentage=None,
+            fixed_amount=Decimal("25.00"),
+        )
+        offer.products.add(self.product)
+
+        payload = ProductSerializer(self.product).data
+
+        self.assertEqual(payload["offer_discount_type"], Offer.DISCOUNT_FIXED)
+        self.assertEqual(Decimal(str(payload["offer_discount_value"])), Decimal("25.00"))
+        self.assertEqual(
+            {variant["offer_discount_type"] for variant in payload["variants"]},
+            {Offer.DISCOUNT_FIXED},
+        )
+        self.assertEqual(
+            {Decimal(str(variant["offer_discount_value"])) for variant in payload["variants"]},
+            {Decimal("25.00")},
+        )
 
     def test_only_selected_discount_value_is_valid(self):
         with self.assertRaises(ValidationError):
@@ -169,3 +190,19 @@ class OfferDiscountTests(TestCase):
             {self.variant_one.id, self.variant_two.id},
         )
         self.assertEqual(variants_by_product[second_product.id], {second_variant.id})
+
+    def test_offer_products_returns_only_the_selected_variant(self):
+        offer = self.offer(
+            discount_type=Offer.DISCOUNT_FIXED,
+            discount_percentage=None,
+            fixed_amount=Decimal("25.00"),
+        )
+        offer.products.add(self.product)
+        offer.variants.add(self.variant_two)
+
+        response = offer_products(RequestFactory().get("/offer-products/"))
+
+        self.assertEqual(
+            {variant["id"] for variant in response.data["products"][0]["variants"]},
+            {self.variant_two.id},
+        )

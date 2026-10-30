@@ -813,12 +813,25 @@ def _top_deal_products():
     return (
         _homepage_product_queryset()
         .filter(
-            offer__is_active=True,
-            offer__start_date__lte=today,
-            offer__end_date__gte=today,
+            Q(
+                offer__is_active=True,
+                offer__start_date__lte=today,
+                offer__end_date__gte=today,
+            )
+            | Q(
+                offers__is_active=True,
+                offers__start_date__lte=today,
+                offers__end_date__gte=today,
+            )
+            | Q(
+                variants__offers__is_active=True,
+                variants__offers__start_date__lte=today,
+                variants__offers__end_date__gte=today,
+            )
         )
         .annotate(_catalog_price=_catalog_price_expression())
-        .order_by("-offer__discount_percentage", "_catalog_price", "-updated_at", "-id")[
+        .distinct()
+        .order_by("_catalog_price", "-updated_at", "-id")[
             :HOMEPAGE_PRODUCT_LIMIT
         ]
     )
@@ -2171,17 +2184,30 @@ def offer_products(request):
 
         return Response([])
 
+    all_variant_offers = active_offers.filter(variants__isnull=True).distinct()
     products = Product.objects.filter(
-        Q(offers__in=active_offers) | Q(offer__in=active_offers)
+        Q(offers__in=active_offers)
+        | Q(variants__offers__in=active_offers)
+        | Q(offer__in=active_offers)
     ).select_related(
         "category",
         "subcategory",
         "brand",
     ).prefetch_related(
-        "variants__color",
-        "variants__images",
-        "variants__sizes__unit_type",
-        "variants__sizes__unit",
+        Prefetch(
+            "variants",
+            queryset=(
+                ProductVariant.objects
+                .select_related("color")
+                .prefetch_related("images", "sizes__unit_type", "sizes__unit")
+                .filter(
+                    Q(product__offers__in=all_variant_offers)
+                    | Q(offers__in=active_offers)
+                    | Q(product__offer__in=active_offers)
+                )
+                .distinct()
+            ),
+        ),
     ).distinct().order_by("pk")
 
     serializer = ProductSerializer(
