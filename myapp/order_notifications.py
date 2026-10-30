@@ -163,10 +163,12 @@ def send_owner_order_email(order_id):
 
 
 def send_order_notifications(order_id):
-    """Send all configured owner notifications after an order is committed."""
+    """Send owner notifications and the appropriate customer email."""
 
     email_sent = send_owner_order_email(order_id)
+    from .customer_emails import send_customer_order_email
     from .whatsapp import send_owner_order_notification as send_whatsapp_notification
 
+    customer_email_sent = send_customer_order_email(order_id)
     whatsapp_sent = send_whatsapp_notification(order_id)
-    return email_sent or whatsapp_sent
+    return email_sent or customer_email_sent or whatsapp_sent

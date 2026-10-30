@@ -53,6 +53,7 @@ from .models import (
     Wishlist,
     WelcomeBonus,
 )
+from .customer_emails import send_paid_invoice_email
 from .sku import assign_generated_variant_sku, assign_generated_variant_unit_sku
 from .permissions import IsSuperAdmin
 from .catalog_pricing import get_product_price_values
@@ -942,12 +943,26 @@ class AdminOrderViewSet(AdminModelViewSet):
     search_fields = ("user__email", "user__first_name", "stripe_session_id")
     ordering = ("-created_at",)
 
+    def perform_update(self, serializer):
+        previous_payment_status = serializer.instance.payment_status
+        order = serializer.save()
+        if previous_payment_status != "Paid" and order.payment_status == "Paid":
+            transaction.on_commit(
+                lambda order_id=order.id: send_paid_invoice_email(order_id)
+            )
+
     def get_serializer_class(self):
         class OrderAdminSerializer(serializers.ModelSerializer):
             class Meta:
                 model = Order
                 fields = "__all__"
-                read_only_fields = ("id", "created_at", "updated_at")
+            read_only_fields = (
+                "id",
+                "created_at",
+                "updated_at",
+                "order_confirmation_email_sent_at",
+                "paid_invoice_email_sent_at",
+            )
 
         return OrderAdminSerializer
 

@@ -274,6 +274,11 @@ def google_login(request):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        if created and login_type == "customer":
+            from .customer_emails import send_registration_email
+
+            send_registration_email(user.id)
+
         if login_type == "customer" and (user.role != "Customer" or user.is_staff or user.is_superuser):
             return Response(
                 {"detail": "Admin accounts must use the Super Admin login page."},
@@ -321,7 +326,14 @@ def register(request):
 
     serializer.is_valid(raise_exception=True)
 
-    serializer.save()
+    user = serializer.save()
+
+    # Registration succeeds even if SMTP is temporarily unavailable; the
+    # delivery helper logs the failure and leaves the timestamp unset so a
+    # later resend can be added without sending duplicates.
+    from .customer_emails import send_registration_email
+
+    send_registration_email(user.id)
 
     return Response(
         {

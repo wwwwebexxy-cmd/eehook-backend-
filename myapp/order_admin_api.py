@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.http import HttpResponse
@@ -11,6 +12,7 @@ from .permissions import IsSuperAdmin
 from .package_label import render_package_label
 from .invoice import render_tax_invoice
 from .serializers import OrderSerializer
+from .customer_emails import send_paid_invoice_email
 
 
 class OrderAdminPagination(PageNumberPagination):
@@ -125,7 +127,12 @@ class SuperAdminOrderDetailView(generics.RetrieveUpdateDestroyAPIView):
         )
         input_serializer.is_valid(raise_exception=True)
         previous_status = order.status
+        previous_payment_status = order.payment_status
         input_serializer.save()
+        if previous_payment_status != "Paid" and order.payment_status == "Paid":
+            transaction.on_commit(
+                lambda order_id=order.id: send_paid_invoice_email(order_id)
+            )
         AdminAuditLog.objects.create(
             admin_user=request.user,
             action="update",

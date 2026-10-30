@@ -45,6 +45,7 @@ class User(AbstractUser):
     username = None
     email = models.EmailField( unique=True )
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="Customer")
+    registration_email_sent_at = models.DateTimeField(null=True, blank=True)
 
     USERNAME_FIELD = "email"
 
@@ -938,6 +939,8 @@ class Order(models.Model):
     )
 
     updated_at = models.DateTimeField(auto_now=True)
+    order_confirmation_email_sent_at = models.DateTimeField(null=True, blank=True)
+    paid_invoice_email_sent_at = models.DateTimeField(null=True, blank=True)
     cancelled_at = models.DateTimeField(null=True, blank=True)
     cancelled_by = models.ForeignKey(
         User,
