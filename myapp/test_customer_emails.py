@@ -1,6 +1,8 @@
+import base64
 from datetime import timedelta
 
 from django.core import mail
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -11,9 +13,13 @@ from .customer_emails import (
     send_registration_email,
 )
 from .models import (
+    Address,
     Category,
     Order,
+    OrderItem,
     Product,
+    ProductImage,
+    ProductVariant,
     SubCategory,
     User,
     WelcomeBonus,
@@ -144,12 +150,61 @@ class CustomerEmailTests(TestCase):
         )
 
     def test_cod_order_confirmation_is_idempotent(self):
+        category = Category.objects.create(name="Order Email Category")
+        subcategory = SubCategory.objects.create(
+            category=category,
+            name="Order Email Subcategory",
+        )
+        product = Product.objects.create(
+            category=category,
+            subcategory=subcategory,
+            name="Order Email Product",
+            description="A product rendered in the order email.",
+            estimated_delivery_time="30-31 Oct",
+        )
+        variant = ProductVariant.objects.create(
+            product=product,
+            price_type="single",
+            price="125.00",
+            stock=4,
+            sku="ORDER-EMAIL-001",
+        )
+        ProductImage.objects.create(
+            variant=variant,
+            image=SimpleUploadedFile(
+                "order-email.png",
+                base64.b64decode(
+                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+                ),
+                content_type="image/png",
+            ),
+            is_primary=True,
+        )
+        address = Address.objects.create(
+            user=self.user,
+            full_name="Test Customer",
+            address_line="Apartment 1, Marina Gate",
+            city="Dubai Marina",
+            emirate="Dubai",
+            country="UAE",
+        )
         order = Order.objects.create(
             user=self.user,
-            total_amount="125.00",
+            address=address,
+            subtotal="125.00",
+            discount_amount="5.00",
+            total_amount="120.00",
             payment_method="COD",
             payment_status="Pending",
             status="Pending",
+        )
+        OrderItem.objects.create(
+            order=order,
+            product=product,
+            quantity=1,
+            original_price="125.00",
+            price="120.00",
+            total_price="120.00",
         )
 
         self.assertTrue(send_order_confirmation_email(order.id))
@@ -157,6 +212,29 @@ class CustomerEmailTests(TestCase):
         message = mail.outbox[0]
         self.assertIn("Order confirmed", message.subject)
         self.assertIn(f"ORD-{order.pk:06d}", message.body)
+        self.assertIn("Order Email Product", message.body)
+        self.assertIn("AED 120.00", message.body)
+        html = message.alternatives[0][0]
+        self.assertIn("ORDER CONFIRMED", html)
+        self.assertIn("YOUR ITEMS", html)
+        self.assertIn("ORDER-EMAIL-001", html)
+        self.assertIn("cid:order-item-0", html)
+        self.assertIn("SHIPPING TO", html)
+        self.assertIn("PAYMENT", html)
+        self.assertIn("VIEW MY ORDER", html)
+        self.assertIn("cid:eehook-logo", html)
+        self.assertTrue(
+            any(
+                part.get("Content-ID") == "<eehook-logo>"
+                for part in message.message().walk()
+            )
+        )
+        self.assertTrue(
+            any(
+                part.get("Content-ID") == "<order-item-0>"
+                for part in message.message().walk()
+            )
+        )
         self.assertIsNotNone(Order.objects.get(pk=order.pk).order_confirmation_email_sent_at)
 
         self.assertFalse(send_order_confirmation_email(order.id))

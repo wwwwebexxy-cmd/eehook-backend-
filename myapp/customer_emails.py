@@ -1,6 +1,10 @@
 """Customer-facing registration, order, and paid-invoice emails."""
 
 import logging
+import mimetypes
+from decimal import Decimal, ROUND_HALF_UP
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.image import MIMEImage
 from html import escape
 from pathlib import Path
@@ -13,6 +17,7 @@ from django.utils.timezone import localtime
 
 from .invoice import render_tax_invoice
 from .models import Order, User
+from .sku import resolve_order_item_sku
 
 
 logger = logging.getLogger(__name__)
@@ -42,6 +47,12 @@ def _name(user, address=None):
 
 def _money(value):
     return f"AED {value or 0:,.2f}"
+
+
+def _decimal(value):
+    return Decimal(str(value or "0")).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
 
 
 def _order_number(order):
@@ -75,6 +86,122 @@ def _item_label(item):
     if item.variant_unit_id and item.variant_unit.grade:
         details.append(f"Grade: {item.variant_unit.grade}")
     return item.product.name + (f" ({' | '.join(details)})" if details else "")
+
+
+def _order_item_variant(item):
+    if item.variant_unit_id and item.variant_unit and item.variant_unit.variant_id:
+        return item.variant_unit.variant
+
+    variants = list(item.product.variants.all())
+    if item.color_id:
+        matching = next(
+            (variant for variant in variants if variant.color_id == item.color_id),
+            None,
+        )
+        if matching:
+            return matching
+    return next(
+        (variant for variant in variants if variant.color_id is None),
+        None,
+    ) or (variants[0] if variants else None)
+
+
+def _order_item_sku(item):
+    if item.variant_unit_id and item.variant_unit and item.variant_unit.sku:
+        return str(item.variant_unit.sku).strip()
+    variant = _order_item_variant(item)
+    if variant and variant.sku:
+        return str(variant.sku).strip()
+    return resolve_order_item_sku(item) or "-"
+
+
+def _order_item_image_path(item):
+    variant = _order_item_variant(item)
+    if not variant:
+        return None
+    images = list(variant.images.all())
+    image = next((candidate for candidate in images if candidate.is_primary), None)
+    image = image or (images[0] if images else None)
+    if not image or not image.image:
+        return None
+    try:
+        path = Path(image.image.path)
+    except (AttributeError, ValueError, OSError):
+        return None
+    return path if path.is_file() else None
+
+
+def _order_item_meta(item):
+    details = []
+    if item.color:
+        details.append(str(item.color.name).strip())
+    unit = item.variant_unit.unit if item.variant_unit_id and item.variant_unit.unit_id else item.unit
+    if unit:
+        unit_type = (
+            item.variant_unit.unit_type
+            if item.variant_unit_id and item.variant_unit.unit_type_id
+            else getattr(unit, "unit_type", None)
+        )
+        details.append(
+            f"{unit_type.name}: {unit.name}" if unit_type else str(unit.name)
+        )
+    if item.variant_unit_id and item.variant_unit.grade:
+        details.append(f"Grade: {item.variant_unit.grade}")
+    sku = _order_item_sku(item)
+    if sku != "-":
+        details.append(sku)
+    details.append(f"Qty {item.quantity}")
+    return " · ".join(details)
+
+
+def _order_arrival_text(order):
+    for item in order.items.all():
+        delivery = str(item.product.estimated_delivery_time or "").strip()
+        if delivery:
+            return delivery
+    return "To be confirmed"
+
+
+def _order_address_lines(order):
+    address = order.address
+    if not address:
+        return ["Address not provided"]
+    lines = []
+    if address.full_name:
+        lines.append(str(address.full_name).strip())
+    if address.address_line:
+        lines.append(str(address.address_line).strip())
+    locality = [address.city, address.emirate, address.postal_code, address.country]
+    locality_text = ", ".join(str(value).strip() for value in locality if value)
+    if locality_text:
+        lines.append(locality_text)
+    return lines or ["Address not provided"]
+
+
+def _order_payment_lines(order):
+    if order.payment_method == "WHATSAPP":
+        return ["WhatsApp order", "Payment to be confirmed"]
+    return ["Cash on Delivery", "Payment on delivery"]
+
+
+def _order_totals(order):
+    subtotal = _decimal(order.subtotal)
+    discount = _decimal(order.discount_amount)
+    shipping = _decimal(order.shipping_charge)
+    total = _decimal(order.total_amount)
+    discounted_subtotal = max(subtotal - discount, Decimal("0.00"))
+    included_vat = max(
+        total - shipping - discounted_subtotal,
+        Decimal("0.00"),
+    )
+    return {
+        "subtotal": _money(subtotal),
+        "discount": _money(discount),
+        "shipping": "FREE" if shipping == Decimal("0.00") else _money(shipping),
+        "vat": _money(included_vat),
+        "total": _money(total),
+        "has_discount": discount > Decimal("0.00"),
+    }
 
 
 def _email_shell(title, content):
@@ -111,9 +238,18 @@ def _text_and_html(
     if attachment:
         message.attach(*attachment)
     for content_id, image_path in inline_images:
-        image = MIMEImage(Path(image_path).read_bytes())
+        image_path = Path(image_path)
+        image_data = image_path.read_bytes()
+        try:
+            image = MIMEImage(image_data)
+        except TypeError:
+            mime_type = mimetypes.guess_type(image_path.name)[0] or "application/octet-stream"
+            maintype, subtype = mime_type.split("/", 1)
+            image = MIMEBase(maintype, subtype)
+            image.set_payload(image_data)
+            encoders.encode_base64(image)
         image.add_header("Content-ID", f"<{content_id}>")
-        image.add_header("Content-Disposition", "inline", filename=Path(image_path).name)
+        image.add_header("Content-Disposition", "inline", filename=image_path.name)
         message.attach(image)
     return message
 
@@ -304,13 +440,171 @@ def _get_order(order_id):
         .select_related("user", "address")
         .prefetch_related(
             "items__product",
+            "items__product__variants__images",
             "items__color",
             "items__unit__unit_type",
             "items__variant_unit__unit",
             "items__variant_unit__unit_type",
+            "items__variant_unit__variant__images",
         )
         .get(pk=order_id)
     )
+
+
+def _order_item_rows_html(items, image_cids):
+    rows = []
+    for index, item in enumerate(items):
+        product_name = escape(str(item.product.name))
+        metadata = escape(_order_item_meta(item))
+        image_cid = image_cids.get(index)
+        if image_cid:
+            visual = (
+                f'<img src="cid:{escape(image_cid)}" width="58" height="58" '
+                f'alt="{product_name}" style="display:block;width:58px;height:58px;object-fit:contain;border:0">'
+            )
+        else:
+            visual = (
+                '<div aria-hidden="true" style="width:58px;height:58px;background:#f4f0e6;'
+                'border-radius:4px"></div>'
+            )
+        rows.append(
+            f'''<tr>
+              <td style="padding:10px 8px 10px 0;border-bottom:1px solid #e7e0d3;width:68px;vertical-align:middle">{visual}</td>
+              <td style="padding:10px 8px;border-bottom:1px solid #e7e0d3;vertical-align:middle">
+                <div style="font-size:15px;line-height:1.35;color:#304a54;font-weight:700">{product_name}</div>
+                <div style="padding-top:3px;font-size:11px;line-height:1.45;color:#71858d">{metadata}</div>
+              </td>
+              <td style="padding:10px 0;text-align:right;border-bottom:1px solid #e7e0d3;white-space:nowrap;vertical-align:middle;font-size:14px;color:#304a54">{escape(_money(item.total_price))}</td>
+            </tr>'''
+        )
+    return "".join(rows) or (
+        '<tr><td colspan="3" style="padding:14px 0;border-bottom:1px solid #e7e0d3;'
+        'font-size:13px;color:#71858d">Your order is being prepared.</td></tr>'
+    )
+
+
+def _order_confirmation_email_html(
+    order,
+    name,
+    number,
+    items,
+    image_cids,
+):
+    site_url = escape(_site_url("/"))
+    order_url = escape(_site_url("/myorders"))
+    arrival = escape(_order_arrival_text(order))
+    totals = _order_totals(order)
+    address_lines = "<br>".join(escape(line) for line in _order_address_lines(order))
+    payment_lines = "<br>".join(escape(line) for line in _order_payment_lines(order))
+    discount_row = ""
+    if totals["has_discount"]:
+        discount_row = f'''
+          <tr><td style="padding:6px 0;text-align:left;color:#71858d">Discount</td><td style="padding:6px 0;text-align:right;color:#ff9000">- {escape(totals["discount"])}</td></tr>'''
+
+    return f'''
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Order confirmed - {escape(number)}</title>
+        <style>
+          @media screen and (max-width: 620px) {{
+            .eehook-email-shell {{ padding: 10px !important; }}
+            .eehook-email-card {{ width: 100% !important; }}
+            .eehook-email-body {{ padding: 34px 20px 28px !important; }}
+            .eehook-email-header {{ padding: 24px 20px 16px !important; }}
+            .eehook-meta-cell {{ display: block !important; width: 100% !important; border-right: 0 !important; border-bottom: 1px solid #e7e0d3 !important; }}
+            .eehook-meta-cell:last-child {{ border-bottom: 0 !important; }}
+            .eehook-info-cell {{ display: block !important; width: 100% !important; padding: 12px 0 0 !important; }}
+            .eehook-info-cell + .eehook-info-cell {{ padding-top: 22px !important; }}
+            .eehook-items-table {{ font-size: 13px !important; }}
+          }}
+        </style>
+      </head>
+      <body style="margin:0;padding:0;background:#f4f0e6;font-family:Arial,Helvetica,sans-serif;color:#304a54">
+        <div class="eehook-email-shell" style="padding:28px 12px;background:#f4f0e6">
+          <table role="presentation" class="eehook-email-card" width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:620px;margin:0 auto;background:#ffffff;border-top:4px solid #ff9000;border-radius:8px;overflow:hidden">
+            <tr><td class="eehook-email-header" style="padding:28px 30px 18px;text-align:right;background:#fffaf0">
+              <a href="{site_url}" style="text-decoration:none"><img src="cid:eehook-logo" width="165" alt="EEHOOK - Seriously Different" style="display:inline-block;width:165px;max-width:70%;height:auto;border:0"></a>
+            </td></tr>
+            <tr><td class="eehook-email-body" style="padding:66px 48px 58px">
+              <div style="font-size:12px;line-height:1.4;color:#ff9000;font-weight:800;letter-spacing:4px">ORDER CONFIRMED <span style="display:inline-block;width:21px;height:21px;line-height:21px;margin-left:3px;border-radius:50%;background:#ff9000;color:#17364b;text-align:center;font-size:14px;letter-spacing:0">✓</span></div>
+              <h1 style="margin:62px 0 10px;font-size:28px;line-height:1.15;color:#38586a;letter-spacing:-.4px">Thank you, {escape(name)}.</h1>
+              <p style="margin:0;font-size:15px;line-height:1.65;color:#71858d">We&apos;ve received your order and we&apos;re getting it ready. You&apos;ll get another email with tracking details as soon as it ships.</p>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;border-top:2px solid #ff9000;background:#fffaf0">
+                <tr>
+                  <td class="eehook-meta-cell" width="33.33%" style="padding:17px 8px;text-align:center;border-right:1px solid #e7e0d3"><div style="font-size:10px;line-height:1.4;color:#71858d;font-weight:800;letter-spacing:2px">ORDER NO.</div><div style="padding-top:7px;font-size:15px;color:#38586a;font-weight:800">#{escape(number)}</div></td>
+                  <td class="eehook-meta-cell" width="33.33%" style="padding:17px 8px;text-align:center;border-right:1px solid #e7e0d3"><div style="font-size:10px;line-height:1.4;color:#71858d;font-weight:800;letter-spacing:2px">ORDER DATE</div><div style="padding-top:7px;font-size:15px;color:#38586a;font-weight:800">{escape(localtime(order.created_at).strftime("%d %b %Y"))}</div></td>
+                  <td class="eehook-meta-cell" width="33.33%" style="padding:17px 8px;text-align:center"><div style="font-size:10px;line-height:1.4;color:#71858d;font-weight:800;letter-spacing:2px">ARRIVES</div><div style="padding-top:7px;font-size:15px;color:#38586a;font-weight:800">{arrival}</div></td>
+                </tr>
+              </table>
+
+              <div style="padding-top:44px;font-size:12px;line-height:1.4;color:#38586a;font-weight:800;letter-spacing:3px;border-bottom:2px solid #38586a;padding-bottom:7px">YOUR ITEMS</div>
+              <table role="presentation" class="eehook-items-table" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">{_order_item_rows_html(items, image_cids)}</table>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:340px;margin:24px 0 0 auto;font-size:14px">
+                <tr><td style="padding:6px 0;text-align:left;color:#71858d">Subtotal</td><td style="padding:6px 0;text-align:right;color:#304a54">{escape(totals["subtotal"])}</td></tr>
+                {discount_row}
+                <tr><td style="padding:6px 0;text-align:left;color:#71858d">Shipping</td><td style="padding:6px 0;text-align:right;color:#304a54">{escape(totals["shipping"])}</td></tr>
+                <tr><td style="padding:6px 0;text-align:left;color:#71858d">VAT (5%)</td><td style="padding:6px 0;text-align:right;color:#304a54">{escape(totals["vat"])}</td></tr>
+                <tr><td colspan="2" style="padding-top:4px;border-bottom:1px solid #e7e0d3"></td></tr>
+                <tr><td style="padding:18px 0 0;text-align:left;color:#38586a;font-size:12px;font-weight:800;letter-spacing:3px">TOTAL</td><td style="padding:14px 0 0;text-align:right;color:#38586a;font-size:25px;font-weight:800">{escape(totals["total"])}</td></tr>
+              </table>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:38px">
+                <tr>
+                  <td class="eehook-info-cell" width="50%" valign="top" style="padding-right:14px"><div style="font-size:12px;color:#38586a;font-weight:800;letter-spacing:3px">SHIPPING TO</div><div style="padding-top:10px;font-size:14px;line-height:1.65;color:#304a54">{address_lines}</div></td>
+                  <td class="eehook-info-cell" width="50%" valign="top" style="padding-left:14px"><div style="font-size:12px;color:#38586a;font-weight:800;letter-spacing:3px">PAYMENT</div><div style="padding-top:10px;font-size:14px;line-height:1.65;color:#304a54">{payment_lines}</div></td>
+                </tr>
+              </table>
+
+              <div style="padding-top:48px;text-align:center"><a href="{order_url}" style="display:inline-block;padding:11px 15px;border-radius:18px;background:#7891a0;color:#ffffff;font-size:12px;font-weight:800;text-decoration:none">VIEW MY ORDER <span style="font-size:18px;line-height:10px;vertical-align:-1px">→</span></a></div>
+            </td></tr>
+            <tr><td style="padding:40px 30px 44px;background:#38586a;text-align:center"><div style="color:#ff9000;font-size:13px;font-weight:800;letter-spacing:3px">SERIOUSLY DIFFERENT</div><div style="padding-top:20px;font-size:12px"><a href="{escape(_site_url('/contact'))}" style="color:#ffffff;text-decoration:none">Help Centre</a><span style="color:#ffb65a;padding:0 5px">|</span><a href="{escape(_site_url('/contact'))}" style="color:#ffffff;text-decoration:none">Returns</a><span style="color:#ffb65a;padding:0 5px">|</span><a href="{escape(_site_url('/profile'))}" style="color:#ffffff;text-decoration:none">My Account</a><span style="color:#ffb65a;padding:0 5px">|</span><a href="{escape(_site_url('/about'))}" style="color:#ffffff;text-decoration:none">Terms</a></div><div style="padding-top:18px;color:#d8e0e3;font-size:11px">eehook · Dubai, United Arab Emirates · <a href="{site_url}" style="color:#ffffff;text-decoration:none">www.eehook.com</a></div><div style="padding-top:7px;color:#d8e0e3;font-size:11px">Questions? Write to <a href="mailto:support@eehook.com" style="color:#ffffff;text-decoration:none">support@eehook.com</a></div><div style="padding-top:14px;color:#b9c8ce;font-size:10px">You&apos;re receiving this email because you placed an order at eehook.com.</div></td></tr>
+          </table>
+          <div style="padding:16px 0 4px;text-align:center">{_social_links_html()}</div>
+        </div>
+      </body>
+    </html>
+    '''
+
+
+def _order_confirmation_email_text(order, name, number, items):
+    totals = _order_totals(order)
+    lines = [
+        f"Order confirmed - {number}",
+        "",
+        f"Thank you, {name}.",
+        "We've received your order and we're getting it ready.",
+        "",
+        "Your items:",
+    ]
+    for item in items:
+        lines.append(
+            f"- {item.product.name} / {_order_item_meta(item)} / {_money(item.total_price)}"
+        )
+    lines.extend(
+        [
+            "",
+            f"Subtotal: {totals['subtotal']}",
+        ]
+    )
+    if totals["has_discount"]:
+        lines.append(f"Discount: - {totals['discount']}")
+    lines.extend(
+        [
+            f"Shipping: {totals['shipping']}",
+            f"VAT (5%): {totals['vat']}",
+            f"Total: {totals['total']}",
+            "",
+            f"Shipping to: {_address_text(order)}",
+            "",
+            f"View your order: {_site_url('/myorders')}",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def send_order_confirmation_email(order_id):
@@ -326,34 +620,29 @@ def send_order_confirmation_email(order_id):
 
         name = _name(order.user, order.address)
         number = _order_number(order)
-        rows = "".join(
-            f"<tr><td style=\"padding:10px 0;border-bottom:1px solid #edf1ee\">{escape(_item_label(item))}</td>"
-            f"<td style=\"padding:10px 0;text-align:center;border-bottom:1px solid #edf1ee\">{item.quantity}</td>"
-            f"<td style=\"padding:10px 0;text-align:right;border-bottom:1px solid #edf1ee\">{escape(_money(item.total_price))}</td></tr>"
-            for item in order.items.all()
-        )
-        rows = rows or '<tr><td colspan="3" style="padding:10px 0">Your order is being prepared.</td></tr>'
-        text_body = (
-            f"Order confirmed — {number}\n\nThank you, {name}.\n"
-            "We have received your order and are getting it ready.\n\n"
-            f"Total: {_money(order.total_amount)}\nShipping to: {_address_text(order)}\n"
-        )
-        html_body = _email_shell(
-            "ORDER CONFIRMED",
-            f"""
-            <p style=\"font-size:20px;font-weight:700;color:#111\">Thank you, {escape(name)}.</p>
-            <p style=\"line-height:1.65;color:#424242\">We’ve received your order and we’re getting it ready. You’ll get another email with tracking details as soon as it ships.</p>
-            <div style=\"margin:24px 0;padding:16px;background:#fafcfa;border:1px solid #e2e8e4;border-radius:9px\"><strong>Order {escape(number)}</strong><br><span style=\"color:#71858d\">{escape(localtime(order.created_at).strftime('%d %b %Y'))}</span></div>
-            <table style=\"width:100%;border-collapse:collapse;font-size:14px\"><thead><tr><th style=\"text-align:left;padding:8px 0\">Item</th><th style=\"text-align:center;padding:8px 0\">Qty</th><th style=\"text-align:right;padding:8px 0\">Amount</th></tr></thead><tbody>{rows}</tbody></table>
-            <p style=\"text-align:right;font-size:18px;font-weight:800;color:#111\">Total: {escape(_money(order.total_amount))}</p>
-            <p style=\"color:#424242\"><strong>Shipping to:</strong><br>{escape(_address_text(order))}</p>
-            """,
+        items = list(order.items.all())
+        image_cids = {}
+        inline_images = [("eehook-logo", EMAIL_LOGO_PATH)]
+        for index, item in enumerate(items):
+            image_path = _order_item_image_path(item)
+            if image_path:
+                content_id = f"order-item-{index}"
+                image_cids[index] = content_id
+                inline_images.append((content_id, image_path))
+        text_body = _order_confirmation_email_text(order, name, number, items)
+        html_body = _order_confirmation_email_html(
+            order,
+            name,
+            number,
+            items,
+            image_cids,
         )
         message = _text_and_html(
-            f"Order confirmed — {number}",
+            f"Order confirmed - {number}",
             text_body,
             html_body,
             order.user.email,
+            inline_images=inline_images,
         )
         if not _send(message):
             return False
