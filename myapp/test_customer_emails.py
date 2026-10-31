@@ -131,6 +131,10 @@ class CustomerEmailTests(TestCase):
         self.assertIn("cid:eehook-logo", html)
         self.assertIn(product.name, html)
         self.assertIn("https://www.instagram.com/eehook.ae", html)
+        self.assertIn("Welcome bonus", html)
+        self.assertNotIn("Member offers", html)
+        self.assertNotIn("coupon", message.body.lower())
+        self.assertNotIn("offer", message.body.lower())
         self.assertNotIn(expired_assignment.code, html)
         self.assertTrue(
             any(
