@@ -10,7 +10,15 @@ from .customer_emails import (
     send_paid_invoice_email,
     send_registration_email,
 )
-from .models import Order, User, WelcomeBonus, WelcomeBonusAssignment
+from .models import (
+    Category,
+    Order,
+    Product,
+    SubCategory,
+    User,
+    WelcomeBonus,
+    WelcomeBonusAssignment,
+)
 
 
 @override_settings(
@@ -72,6 +80,64 @@ class CustomerEmailTests(TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn("Registered Customer", mail.outbox[0].body)
+
+    def test_registration_email_uses_current_bonus_and_eligible_product_copy(self):
+        now = timezone.now()
+        category = Category.objects.create(name="Email Category")
+        subcategory = SubCategory.objects.create(
+            category=category,
+            name="Email Subcategory",
+        )
+        product = Product.objects.create(
+            category=category,
+            subcategory=subcategory,
+            name="Eligible Email Product",
+            description="A product shown in the welcome email.",
+        )
+        active_bonus = WelcomeBonus.objects.create(
+            name="Current Welcome AED 50",
+            applicability_type=WelcomeBonus.APPLICABILITY_PRODUCT,
+            discount_type=WelcomeBonus.DISCOUNT_FIXED,
+            fixed_amount="50.00",
+            start_date=now - timedelta(days=1),
+            end_date=now + timedelta(days=30),
+        )
+        active_bonus.products.add(product)
+        expired_bonus = WelcomeBonus.objects.create(
+            name="Expired Welcome AED 90",
+            discount_type=WelcomeBonus.DISCOUNT_FIXED,
+            fixed_amount="90.00",
+            start_date=now - timedelta(days=30),
+            end_date=now - timedelta(days=1),
+        )
+        user = User.objects.create_user(
+            email="current-bonus@example.test",
+            password="CustomerPass123!",
+            first_name="Current Bonus",
+        )
+        expired_assignment = WelcomeBonusAssignment.objects.create(
+            user=user,
+            welcome_bonus=expired_bonus,
+            code="WB-EXPIRED-EMAIL",
+        )
+
+        self.assertTrue(send_registration_email(user.id))
+        message = mail.outbox[0]
+        html = message.alternatives[0][0]
+
+        self.assertIn("AED 50.00 off", message.body)
+        self.assertIn(product.name, message.body)
+        self.assertNotIn(expired_assignment.code, message.body)
+        self.assertIn("cid:eehook-logo", html)
+        self.assertIn(product.name, html)
+        self.assertIn("https://www.instagram.com/eehook.ae", html)
+        self.assertNotIn(expired_assignment.code, html)
+        self.assertTrue(
+            any(
+                part.get("Content-ID") == "<eehook-logo>"
+                for part in message.message().walk()
+            )
+        )
 
     def test_cod_order_confirmation_is_idempotent(self):
         order = Order.objects.create(

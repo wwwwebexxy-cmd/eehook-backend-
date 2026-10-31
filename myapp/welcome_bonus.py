@@ -89,12 +89,15 @@ def assign_welcome_bonus_to_existing_users(welcome_bonus):
 
 
 def assign_active_welcome_bonuses_to_user(user):
-    """Give a newly registered customer every non-expired campaign once."""
+    """Give a newly registered customer every currently redeemable campaign once."""
     if not user.is_active or user.role != "Customer":
         return []
+    now = timezone.now()
     bonuses = WelcomeBonus.objects.filter(
+        is_active=True,
         archived_at__isnull=True,
-        end_date__gte=timezone.now(),
+        start_date__lte=now,
+        end_date__gte=now,
     )
     return [create_assignment(welcome_bonus, user) for welcome_bonus in bonuses]
 

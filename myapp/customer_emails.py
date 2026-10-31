@@ -1,7 +1,9 @@
 """Customer-facing registration, order, and paid-invoice emails."""
 
 import logging
+from email.mime.image import MIMEImage
 from html import escape
+from pathlib import Path
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
@@ -14,6 +16,15 @@ from .models import Order, User
 
 
 logger = logging.getLogger(__name__)
+
+EMAIL_LOGO_PATH = Path(__file__).with_name("assets") / "eehook-package-logo.png"
+SOCIAL_LINKS = (
+    ("X", "https://x.com/eehookonline", "#111111"),
+    ("f", "https://www.facebook.com/eehookonline/", "#1877f2"),
+    ("t", "https://www.tiktok.com/@eehook.com", "#111111"),
+    ("◎", "https://www.instagram.com/eehook.ae", "#e4405f"),
+    ("▶", "https://www.youtube.com/@eehook9631", "#ff0000"),
+)
 
 
 def _site_url(path=""):
@@ -81,7 +92,15 @@ def _email_shell(title, content):
     """
 
 
-def _text_and_html(subject, text_body, html_body, recipient, *, attachment=None):
+def _text_and_html(
+    subject,
+    text_body,
+    html_body,
+    recipient,
+    *,
+    attachment=None,
+    inline_images=(),
+):
     message = EmailMultiAlternatives(
         subject=subject,
         body=text_body,
@@ -91,6 +110,11 @@ def _text_and_html(subject, text_body, html_body, recipient, *, attachment=None)
     message.attach_alternative(html_body, "text/html")
     if attachment:
         message.attach(*attachment)
+    for content_id, image_path in inline_images:
+        image = MIMEImage(Path(image_path).read_bytes())
+        image.add_header("Content-ID", f"<{content_id}>")
+        image.add_header("Content-Disposition", "inline", filename=Path(image_path).name)
+        message.attach(image)
     return message
 
 
@@ -102,6 +126,132 @@ def _send(message):
         return False
 
 
+def _decimal_text(value):
+    return f"{value or 0:.2f}".rstrip("0").rstrip(".")
+
+
+def _welcome_bonus_scope(bonus):
+    if bonus.applicability_type == "CATEGORY":
+        scope = bonus.category.name if bonus.category_id else "Selected category"
+        if bonus.subcategory_id:
+            scope = f"{scope} / {bonus.subcategory.name}"
+        return scope
+
+    products = [product.name for product in bonus.products.all()]
+    return ", ".join(products) or "Selected products"
+
+
+def _welcome_bonus_copy(assignment):
+    bonus = assignment.welcome_bonus
+    if bonus.discount_type == "FIXED":
+        discount = f"{_money(bonus.fixed_amount)} off"
+    else:
+        discount = f"{_decimal_text(bonus.discount_percentage)}% off"
+    valid_until = localtime(bonus.end_date).strftime("%d %b %Y")
+    return discount, _welcome_bonus_scope(bonus), valid_until
+
+
+def _welcome_gift_html(assignments):
+    if not assignments:
+        return ""
+
+    entries = []
+    for assignment in assignments:
+        discount, scope, valid_until = _welcome_bonus_copy(assignment)
+        entries.append(
+            f"""
+            <div style=\"padding:12px 0;border-top:1px dashed #f0bd68\">
+              <div style=\"font-size:24px;line-height:1.15;color:#17364b;font-weight:800;letter-spacing:.3px\">{escape(assignment.code)}</div>
+              <div style=\"margin-top:5px;color:#304a54;font-size:15px;line-height:1.45\"><strong>{escape(discount)}</strong> on your first eligible order.</div>
+              <div style=\"margin-top:4px;color:#71858d;font-size:12px;line-height:1.45\">Valid on: {escape(scope)}</div>
+              <div style=\"margin-top:3px;color:#71858d;font-size:12px;line-height:1.45\">Valid until: {escape(valid_until)}</div>
+            </div>
+            """
+        )
+    return f"""
+      <div style=\"margin:26px 0;padding:18px 20px;border:1px dashed #e79a27;border-radius:8px;background:#fffaf0\">
+        <div style=\"margin-bottom:4px;font-size:12px;color:#a46a13;font-weight:800;letter-spacing:1.2px\">YOUR WELCOME GIFT</div>
+        {''.join(entries)}
+        <div style=\"margin-top:8px;color:#71858d;font-size:12px;line-height:1.45\">Use the code at checkout while the campaign is active.</div>
+      </div>
+    """
+
+
+def _welcome_gift_text(assignments):
+    if not assignments:
+        return ""
+    lines = ["\nYour welcome gift:"]
+    for assignment in assignments:
+        discount, scope, valid_until = _welcome_bonus_copy(assignment)
+        lines.append(
+            f"{assignment.code} — {discount} on your first eligible order. "
+            f"Valid on: {scope}. Valid until: {valid_until}."
+        )
+    lines.append("Use the code at checkout while the campaign is active.\n")
+    return "\n".join(lines)
+
+
+def _social_links_html():
+    return "".join(
+        f"<a href=\"{escape(url)}\" aria-label=\"EEHOOK on {escape(label)}\" style=\"display:inline-block;margin:0 3px;text-decoration:none\"><span style=\"display:inline-block;width:24px;height:24px;line-height:24px;border-radius:50%;background:{color};color:#ffffff;font-size:12px;font-weight:800;text-align:center\">{escape(label)}</span></a>"
+        for label, url, color in SOCIAL_LINKS
+    )
+
+
+def _registration_email_html(name, gift_html):
+    site_url = escape(_site_url("/"))
+    return f"""
+    <!doctype html>
+    <html lang=\"en\">
+      <head>
+        <meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\">
+        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+        <title>Welcome to EEHOOK</title>
+        <style>
+          @media screen and (max-width: 620px) {{
+            .eehook-email-shell {{ padding: 10px !important; }}
+            .eehook-email-card {{ width: 100% !important; }}
+            .eehook-email-body {{ padding: 28px 20px !important; }}
+            .eehook-feature-cell {{ display: block !important; width: 100% !important; padding: 8px 0 !important; }}
+          }}
+        </style>
+      </head>
+      <body style=\"margin:0;padding:0;background:#f4f0e6;font-family:Arial,Helvetica,sans-serif;color:#304a54\">
+        <div class=\"eehook-email-shell\" style=\"padding:28px 12px;background:#f4f0e6\">
+          <table role=\"presentation\" class=\"eehook-email-card\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;max-width:620px;margin:0 auto;background:#ffffff;border-top:4px solid #ff9000;border-radius:8px;overflow:hidden\">
+            <tr>
+              <td style=\"padding:28px 30px 18px;text-align:right\">
+                <a href=\"{site_url}\" style=\"text-decoration:none\"><img src=\"cid:eehook-logo\" width=\"165\" alt=\"EEHOOK - Seriously Different\" style=\"display:inline-block;width:165px;max-width:70%;height:auto;border:0\"></a>
+              </td>
+            </tr>
+            <tr>
+              <td class=\"eehook-email-body\" style=\"padding:8px 50px 34px\">
+                <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">
+                  <tr><td style=\"font-size:12px;line-height:1.4;color:#ff9000;font-weight:800;letter-spacing:.8px\">WELCOME TO <span style=\"color:#38586a\">EEHOOK</span> <a href=\"{escape(_site_url('/login'))}\" style=\"display:inline-block;margin-left:8px;padding:4px 8px;border:1px solid #f0c276;border-radius:12px;color:#a46a13;font-size:10px;text-decoration:none;letter-spacing:0\">Login to your account</a></td></tr>
+                  <tr><td style=\"padding-top:26px;font-size:28px;line-height:1.15;color:#17364b;font-weight:800\">One last step, {escape(name)}.</td></tr>
+                  <tr><td style=\"padding-top:14px;font-size:15px;line-height:1.65;color:#61717b\">Thanks for creating your EEHOOK account. Your account is active and ready for seriously different products.</td></tr>
+                  <tr><td style=\"padding-top:22px\"><a href=\"{site_url}\" style=\"display:inline-block;padding:13px 18px;border-radius:5px;background:#38586a;color:#ffffff;font-size:12px;font-weight:800;letter-spacing:.5px;text-decoration:none\">START SHOPPING</a></td></tr>
+                  {f'<tr><td>{gift_html}</td></tr>' if gift_html else ''}
+                  <tr><td style=\"padding-top:20px;font-size:12px;line-height:1.55;color:#71858d\">You can manage your account, orders and saved products any time from My Account.</td></tr>
+                  <tr><td style=\"padding-top:28px\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>
+                    <td class=\"eehook-feature-cell\" width=\"33.33%\" valign=\"top\" style=\"padding-right:12px\"><span style=\"display:block;width:22px;height:22px;background:#ff9000\"></span><strong style=\"display:block;padding-top:9px;font-size:13px;color:#304a54\">Fast delivery</strong><span style=\"display:block;padding-top:4px;font-size:11px;line-height:1.45;color:#71858d\">Tracked shipping straight to your door.</span></td>
+                    <td class=\"eehook-feature-cell\" width=\"33.33%\" valign=\"top\" style=\"padding:0 6px\"><span style=\"display:block;width:22px;height:22px;background:#ff9000\"></span><strong style=\"display:block;padding-top:9px;font-size:13px;color:#304a54\">Easy returns</strong><span style=\"display:block;padding-top:4px;font-size:11px;line-height:1.45;color:#71858d\">Changed your mind? No stress.</span></td>
+                    <td class=\"eehook-feature-cell\" width=\"33.33%\" valign=\"top\" style=\"padding-left:12px\"><span style=\"display:block;width:22px;height:22px;background:#ff9000\"></span><strong style=\"display:block;padding-top:9px;font-size:13px;color:#304a54\">Member offers</strong><span style=\"display:block;padding-top:4px;font-size:11px;line-height:1.45;color:#71858d\">First to know about new drops.</span></td>
+                  </tr></table></td></tr>
+                </table>
+              </td>
+            </tr>
+            <tr><td style=\"padding:0 50px\"><div style=\"height:1px;background:#e8eceb\"></div></td></tr>
+            <tr><td style=\"padding:22px 50px 26px;text-align:center;font-size:11px;line-height:1.55;color:#71858d\">Didn’t you create this account? You can safely ignore this email — nothing will happen without your confirmation.</td></tr>
+            <tr><td style=\"padding:22px 30px 24px;background:#38586a;text-align:center\"><div style=\"color:#ff9000;font-size:13px;font-weight:800;letter-spacing:1.3px\">SERIOUSLY DIFFERENT</div><div style=\"padding-top:14px;font-size:11px\"><a href=\"{escape(_site_url('/contact'))}\" style=\"color:#ffffff;text-decoration:none\">Help Centre</a><span style=\"color:#ffb65a;padding:0 5px\">|</span><a href=\"{escape(_site_url('/contact'))}\" style=\"color:#ffffff;text-decoration:none\">Returns</a><span style=\"color:#ffb65a;padding:0 5px\">|</span><a href=\"{escape(_site_url('/profile'))}\" style=\"color:#ffffff;text-decoration:none\">My Account</a><span style=\"color:#ffb65a;padding:0 5px\">|</span><a href=\"{escape(_site_url('/about'))}\" style=\"color:#ffffff;text-decoration:none\">Terms</a></div><div style=\"padding-top:12px;color:#d8e0e3;font-size:11px\">EEHOOK · Dubai, United Arab Emirates · <a href=\"{site_url}\" style=\"color:#ffffff;text-decoration:none\">www.eehook.com</a></div><div style=\"padding-top:6px;color:#d8e0e3;font-size:11px\">Questions? Write to <a href=\"mailto:support@eehook.com\" style=\"color:#ffffff;text-decoration:none\">support@eehook.com</a></div><div style=\"padding-top:13px;color:#b9c8ce;font-size:10px\">You’re receiving this email because an account was created at eehook.com.</div></td></tr>
+          </table>
+          <div style=\"padding:16px 0 4px;text-align:center\">{_social_links_html()}</div>
+        </div>
+      </body>
+    </html>
+    """
+
+
 def send_registration_email(user_id):
     """Send the welcome email once, after a customer account is created."""
     with transaction.atomic():
@@ -109,50 +259,38 @@ def send_registration_email(user_id):
         if user.registration_email_sent_at or not user.email:
             return False
 
-        assignment = (
+        now = timezone.now()
+        assignments = list(
             user.welcome_bonus_assignments.select_related("welcome_bonus")
+            .select_related("welcome_bonus__category", "welcome_bonus__subcategory")
+            .prefetch_related("welcome_bonus__products")
             .filter(status__in=("AVAILABLE", "CLAIMED"))
-            .order_by("-created_at")
-            .first()
+            .filter(
+                welcome_bonus__is_active=True,
+                welcome_bonus__archived_at__isnull=True,
+                welcome_bonus__start_date__lte=now,
+                welcome_bonus__end_date__gte=now,
+            )
+            .order_by("created_at", "id")
         )
         name = _name(user)
-        bonus_html = ""
-        bonus_text = ""
-        if assignment:
-            bonus = assignment.welcome_bonus
-            if bonus.discount_type == "FIXED":
-                discount = _money(bonus.fixed_amount)
-                rule = f"{discount} off your first eligible order"
-            else:
-                discount = f"{bonus.discount_percentage}%"
-                rule = f"{discount} off your first eligible order"
-            bonus_html = f"""
-              <div style=\"margin:24px 0;padding:20px;border:1px solid #ffd08a;border-radius:10px;background:#fff7e8\">
-                <div style=\"font-size:12px;color:#9b6a16;font-weight:700;letter-spacing:1px\">YOUR WELCOME GIFT</div>
-                <div style=\"margin:8px 0;font-size:24px;color:#111;font-weight:800\">{escape(assignment.code)}</div>
-                <div style=\"color:#424242\">{escape(rule)}.</div>
-              </div>
-            """
-            bonus_text = f"\nYour welcome bonus code: {assignment.code} ({rule}).\n"
-
-        subject = "Welcome to EEHOOK"
+        gift_html = _welcome_gift_html(assignments)
+        gift_text = _welcome_gift_text(assignments)
+        subject = "Welcome to EEHOOK — your account is ready"
         text_body = (
             f"Welcome to EEHOOK, {name}.\n\n"
-            "Your account is ready. Start shopping for seriously different products.\n"
-            f"{bonus_text}\n"
-            f"Visit EEHOOK: {_site_url('/')}\n"
+            "Your account is active and ready for seriously different products.\n"
+            f"{gift_text}\n"
+            f"Start shopping: {_site_url('/')}\n"
         )
-        html_body = _email_shell(
-            "WELCOME TO EEHOOK",
-            f"""
-            <p style=\"font-size:20px;font-weight:700;color:#111\">One last step, {escape(name)}.</p>
-            <p style=\"line-height:1.65;color:#424242\">Thanks for creating your EEHOOK account. Your account is active and ready for shopping.</p>
-            {bonus_html}
-            <p><a href=\"{escape(_site_url('/'))}\" style=\"display:inline-block;padding:13px 20px;border-radius:7px;background:#ff9000;color:#111;text-decoration:none;font-weight:800\">START SHOPPING</a></p>
-            <p style=\"margin-top:24px;color:#71858d;font-size:12px\">Fast delivery · Easy returns · Member offers</p>
-            """,
+        html_body = _registration_email_html(name, gift_html)
+        message = _text_and_html(
+            subject,
+            text_body,
+            html_body,
+            user.email,
+            inline_images=(("eehook-logo", EMAIL_LOGO_PATH),),
         )
-        message = _text_and_html(subject, text_body, html_body, user.email)
         if not _send(message):
             return False
         user.registration_email_sent_at = timezone.now()
