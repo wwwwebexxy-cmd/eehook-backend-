@@ -204,6 +204,47 @@ def _order_totals(order):
     }
 
 
+def _email_invoice_number(order):
+    year = localtime(order.created_at).year if order.created_at else timezone.now().year
+    return f"EH-{year}-{order.pk:06d}"
+
+
+def _invoice_shipping_text(order):
+    for item in order.items.all():
+        delivery = str(item.product.estimated_delivery_time or "").strip()
+        if delivery:
+            return delivery
+    return "Delivery timing to be confirmed"
+
+
+def _invoice_payment_text(order):
+    if hasattr(order, "get_payment_method_display"):
+        return str(order.get_payment_method_display())
+    return str(order.payment_method or "Payment received")
+
+
+def _invoice_customer_lines(order):
+    lines = _order_address_lines(order)
+    phone = getattr(order.address, "phone", None) if order.address else None
+    if phone:
+        lines.append(str(phone).strip())
+    return lines
+
+
+def _invoice_status_steps(order):
+    status = str(order.status or "Pending")
+    packed = "Today" if status in {"Processing", "Shipped", "Delivered"} else "Next"
+    shipped = "On its way" if status in {"Shipped", "Delivered"} else "Next"
+    delivered = "Delivered" if status == "Delivered" else "Next"
+    ordered = localtime(order.created_at).strftime("%d %b") if order.created_at else "-"
+    return (
+        ("Ordered", ordered),
+        ("Packed", packed),
+        ("Shipped", shipped),
+        ("Delivered", delivered),
+    )
+
+
 def _email_shell(title, content):
     return f"""
     <div style=\"margin:0;background:#f8faf8;padding:28px 12px;font-family:Arial,Helvetica,sans-serif;color:#304a54\">
@@ -607,6 +648,160 @@ def _order_confirmation_email_text(order, name, number, items):
     return "\n".join(lines)
 
 
+def _invoice_item_rows_html(items):
+    rows = []
+    for item in items:
+        product_name = escape(str(item.product.name))
+        metadata = escape(_order_item_meta(item))
+        rows.append(
+            f'''<tr>
+              <td style="padding:13px 12px;border-bottom:1px solid #e7e0d3;vertical-align:middle"><div style="font-size:14px;line-height:1.35;color:#304a54;font-weight:700">{product_name}</div><div style="padding-top:3px;font-size:11px;line-height:1.45;color:#71858d">{metadata}</div></td>
+              <td style="padding:13px 8px;text-align:center;border-bottom:1px solid #e7e0d3;vertical-align:middle;font-size:13px;color:#304a54">{item.quantity}</td>
+              <td style="padding:13px 8px;text-align:right;border-bottom:1px solid #e7e0d3;vertical-align:middle;font-size:13px;color:#304a54;white-space:nowrap">{escape(_money(item.price))}</td>
+              <td style="padding:13px 12px 13px 8px;text-align:right;border-bottom:1px solid #e7e0d3;vertical-align:middle;font-size:13px;color:#304a54;font-weight:700;white-space:nowrap">{escape(_money(item.total_price))}</td>
+            </tr>'''
+        )
+    return "".join(rows) or (
+        '<tr><td colspan="4" style="padding:14px 12px;border-bottom:1px solid #e7e0d3;'
+        'font-size:13px;color:#71858d">Your order items are being prepared.</td></tr>'
+    )
+
+
+def _invoice_item_rows_text(items):
+    if not items:
+        return ["Your order items are being prepared."]
+    return [
+        f"{item.product.name} / {_order_item_meta(item)} / "
+        f"Qty {item.quantity} / {_money(item.price)} / {_money(item.total_price)}"
+        for item in items
+    ]
+
+
+def _invoice_email_html(order, name, invoice_number, items):
+    site_url = escape(_site_url("/"))
+    invoice_url = escape(_site_url("/myorders"))
+    invoice_date = localtime(order.created_at).strftime("%d %b %Y") if order.created_at else "-"
+    totals = _order_totals(order)
+    customer_lines = "<br>".join(escape(line) for line in _invoice_customer_lines(order))
+    payment_text = escape(_invoice_payment_text(order))
+    shipping_text = escape(_invoice_shipping_text(order))
+    seller_vat = escape(str(getattr(settings, "INVOICE_SELLER_VAT_NUMBER", "104131003600003")))
+    discount_label = "Discount"
+    discount_row = ""
+    if totals["has_discount"]:
+        discount_row = f'''
+          <tr><td style="padding:6px 0;text-align:left;color:#71858d">{discount_label}</td><td style="padding:6px 0;text-align:right;color:#ff9000">- {escape(totals["discount"])}</td></tr>'''
+    steps = _invoice_status_steps(order)
+    step_cells = []
+    for index, (label, detail) in enumerate(steps):
+        active_color = "#ff9000" if index == 0 or (index == 1 and order.status in {"Processing", "Shipped", "Delivered"}) or (index == 2 and order.status in {"Shipped", "Delivered"}) or (index == 3 and order.status == "Delivered") else "#e7e0d3"
+        step_cells.append(
+            f'''<td width="25%" style="padding:0 3px;text-align:center;vertical-align:top"><div style="height:5px;background:{active_color}"></div><div style="padding-top:10px;font-size:11px;line-height:1.35;color:#304a54">{escape(label)}</div><div style="font-size:10px;line-height:1.35;color:#71858d">{escape(detail)}</div></td>'''
+        )
+    return f'''
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Paid invoice - {escape(invoice_number)}</title>
+        <style>
+          @media screen and (max-width: 620px) {{
+            .eehook-email-shell {{ padding: 10px !important; }}
+            .eehook-email-card {{ width: 100% !important; }}
+            .invoice-header {{ padding: 24px 20px 18px !important; }}
+            .invoice-band {{ padding: 23px 20px !important; }}
+            .invoice-body {{ padding: 30px 20px 28px !important; }}
+            .invoice-half {{ display: block !important; width: 100% !important; padding: 10px 0 !important; }}
+            .invoice-summary {{ margin-top: 18px !important; }}
+            .invoice-table {{ font-size: 12px !important; }}
+            .invoice-table th, .invoice-table td {{ padding-left: 5px !important; padding-right: 5px !important; }}
+            .invoice-actions a {{ display: block !important; margin: 8px auto !important; width: 120px !important; }}
+            .invoice-footer {{ padding: 34px 20px 38px !important; }}
+          }}
+        </style>
+      </head>
+      <body style="margin:0;padding:0;background:#f4f0e6;font-family:Arial,Helvetica,sans-serif;color:#304a54">
+        <div class="eehook-email-shell" style="padding:28px 12px;background:#f4f0e6">
+          <table role="presentation" class="eehook-email-card" width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:620px;margin:0 auto;background:#ffffff;border-top:4px solid #ff9000;border-radius:8px;overflow:hidden">
+            <tr><td class="invoice-header" style="padding:28px 30px 22px;text-align:left;background:#fffaf0">
+              <a href="{site_url}" style="text-decoration:none"><img src="cid:eehook-logo" width="185" alt="EEHOOK - Seriously Different" style="display:block;width:185px;max-width:80%;height:auto;border:0"></a>
+            </td></tr>
+            <tr><td class="invoice-band" style="padding:24px 36px;background:#38586a;color:#ffffff">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+                <td width="58%" valign="middle"><div style="font-family:Georgia,serif;font-size:28px;line-height:1.1;letter-spacing:2px;color:#ffffff">INVOICE</div><div style="padding-top:8px;font-size:12px;letter-spacing:1px;color:#d8e0e3">#{escape(invoice_number)}</div></td>
+                <td width="42%" valign="middle" style="text-align:right"><div style="display:inline-block;padding:8px 11px;border-radius:9px;background:#c8d5df;color:#38586a;font-size:22px;line-height:1;font-weight:800;letter-spacing:1px"><span style="display:inline-block;width:25px;height:25px;line-height:25px;margin-right:4px;border-radius:50%;background:#00a51a;color:#ffffff;text-align:center;font-size:18px;vertical-align:2px">✓</span>PAID</div><div style="padding-top:9px;font-size:11px;color:#d8e0e3">Issued {escape(invoice_date)}</div></td>
+              </tr></table>
+            </td></tr>
+            <tr><td class="invoice-body" style="padding:50px 38px 34px">
+              <h1 style="margin:0 0 9px;font-size:24px;line-height:1.2;color:#38586a;letter-spacing:-.3px">Hi {escape(name)}, you&apos;re all HOOKED in!</h1>
+              <p style="margin:0;font-size:15px;line-height:1.6;color:#71858d">Thank you for shopping with EEHOOK. Your payment has been received and your order is being prepared. Your invoice is below - a PDF copy is attached for your records.</p>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px"><tr>
+                <td class="invoice-half" width="50%" valign="top" style="padding-right:18px"><div style="font-size:11px;color:#38586a;font-weight:800;letter-spacing:2px"><span style="display:inline-block;width:10px;height:19px;margin-right:8px;background:#ff9000;vertical-align:-5px"></span>BILLED TO</div><div style="padding-top:15px;font-size:13px;line-height:1.6;color:#304a54">{customer_lines}</div></td>
+                <td class="invoice-half" width="50%" valign="top" style="padding-left:18px"><div style="font-size:11px;color:#38586a;font-weight:800;letter-spacing:2px"><span style="display:inline-block;width:10px;height:19px;margin-right:8px;background:#ff9000;vertical-align:-5px"></span>ORDER DETAILS</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;font-size:13px;line-height:1.75"><tr><td style="color:#71858d">Order no.</td><td style="text-align:right;color:#304a54;font-weight:700">#{escape(invoice_number)}</td></tr><tr><td style="color:#71858d">Order date</td><td style="text-align:right;color:#304a54">{escape(invoice_date)}</td></tr><tr><td style="color:#71858d">Payment</td><td style="text-align:right;color:#304a54">{payment_text}</td></tr><tr><td style="color:#71858d">Shipping</td><td style="text-align:right;color:#304a54">{shipping_text}</td></tr></table></td>
+              </tr></table>
+
+              <table role="presentation" class="invoice-table" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;border-collapse:collapse;font-size:13px">
+                <thead><tr style="background:#38586a;color:#ffffff"><th style="padding:11px 12px;text-align:left;font-size:10px;letter-spacing:2px">ITEM</th><th style="padding:11px 8px;text-align:center;font-size:10px;letter-spacing:2px">QTY</th><th style="padding:11px 8px;text-align:right;font-size:10px;letter-spacing:2px">PRICE</th><th style="padding:11px 12px 11px 8px;text-align:right;font-size:10px;letter-spacing:2px">TOTAL</th></tr></thead>
+                <tbody>{_invoice_item_rows_html(items)}</tbody>
+              </table>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px"><tr>
+                <td class="invoice-half" width="49%" valign="top" style="padding-right:18px"><div style="font-size:11px;color:#38586a;font-weight:800;letter-spacing:2px">NOTE</div><div style="padding-top:11px;font-size:12px;line-height:1.6;color:#71858d">Prices in UAE Dirhams (AED).<br>Payment received for this order.<br>Keep this email for your records.</div></td>
+                <td class="invoice-half invoice-summary" width="51%" valign="top" style="padding-left:18px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:13px"><tr><td style="padding:5px 0;color:#71858d">Subtotal</td><td style="padding:5px 0;text-align:right;color:#304a54">{escape(totals["subtotal"].replace("AED ", ""))}</td></tr>{discount_row}<tr><td style="padding:5px 0;color:#71858d">Shipping</td><td style="padding:5px 0;text-align:right;color:#304a54">{escape(totals["shipping"].replace("AED ", ""))}</td></tr><tr><td style="padding:5px 0;color:#71858d">VAT (5%)</td><td style="padding:5px 0;text-align:right;color:#304a54">{escape(totals["vat"].replace("AED ", ""))}</td></tr></table></td>
+              </tr></table>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:25px;border-radius:8px;background:#c8d5df"><tr><td style="padding:23px 19px;color:#38586a;font-size:15px;letter-spacing:.5px">TOTAL PAID</td><td style="padding:18px 19px;text-align:right;color:#38586a;white-space:nowrap"><span style="font-size:13px">AED </span><strong style="font-size:28px;letter-spacing:-.5px">{escape(totals["total"].replace("AED ", ""))}</strong></td></tr></table>
+
+              <div style="padding-top:32px;font-size:11px;color:#38586a;font-weight:800;letter-spacing:2px"><span style="display:inline-block;width:10px;height:19px;margin-right:8px;background:#ff9000;vertical-align:-5px"></span>WHERE&apos;S MY ORDER?</div>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:17px"><tr>{"".join(step_cells)}</tr></table>
+
+              <div style="margin-top:34px;border-top:1px dashed #f0bd68"></div>
+              <div class="invoice-actions" style="padding-top:28px;text-align:center"><a href="{site_url}" style="display:inline-block;margin:0 2px;padding:11px 18px;border-radius:8px;background:#c8d5df;color:#38586a;font-size:12px;text-decoration:none">Buy More</a><a href="{escape(_site_url('/profile'))}" style="display:inline-block;margin:0 2px;padding:11px 18px;border-radius:8px;background:#c8d5df;color:#38586a;font-size:12px;text-decoration:none">My Account</a></div>
+              <div style="padding-top:25px;text-align:center;font-family:Georgia,serif;font-size:11px;color:#9aa7ae">Need a hand? Reply to this email or write to <a href="mailto:info@eehook.com" style="color:#ff9000;text-decoration:none">info@eehook.com</a></div>
+            </td></tr>
+            <tr><td class="invoice-footer" style="padding:39px 30px 44px;background:#38586a;text-align:center"><div style="color:#ff9000;font-size:13px;font-weight:800;letter-spacing:3px">SERIOUSLY DIFFERENT</div><div style="padding-top:21px;font-size:12px"><a href="{escape(_site_url('/contact'))}" style="color:#ffffff;text-decoration:none">Help Centre</a><span style="color:#ffb65a;padding:0 5px">|</span><a href="{escape(_site_url('/contact'))}" style="color:#ffffff;text-decoration:none">Returns</a><span style="color:#ffb65a;padding:0 5px">|</span><a href="{invoice_url}" style="color:#ffffff;text-decoration:none">Track Order</a><span style="color:#ffb65a;padding:0 5px">|</span><a href="{escape(_site_url('/about'))}" style="color:#ffffff;text-decoration:none">Terms</a></div><div style="padding-top:19px;color:#d8e0e3;font-size:11px">EEHOOK · Dubai, United Arab Emirates</div><div style="padding-top:7px;color:#d8e0e3;font-size:11px">TRN {seller_vat} · <a href="{site_url}" style="color:#ffffff;text-decoration:none">www.eehook.com</a></div><div style="padding-top:8px;color:#b9c8ce;font-size:10px">This is a computer-generated invoice and does not require a signature.</div><div style="padding-top:6px;color:#b9c8ce;font-size:10px">You&apos;re receiving this email because you placed an order at eehook.com.</div></td></tr>
+          </table>
+          <div style="padding:16px 0 4px;text-align:center">{_social_links_html()}</div>
+        </div>
+      </body>
+    </html>
+    '''
+
+
+def _invoice_email_text(order, name, invoice_number, items):
+    totals = _order_totals(order)
+    invoice_date = localtime(order.created_at).strftime("%d %b %Y") if order.created_at else "-"
+    lines = [
+        f"Paid invoice - {invoice_number}",
+        "",
+        f"Hi {name}, you're all HOOKED in!",
+        "Thank you for shopping with EEHOOK. Your payment has been received and your order is being prepared.",
+        "Your invoice is included below and attached as a PDF for your records.",
+        "",
+        f"Order date: {invoice_date}",
+        f"Payment: {_invoice_payment_text(order)}",
+        "",
+        "Items:",
+        *_invoice_item_rows_text(items),
+        "",
+        f"Subtotal: {totals['subtotal']}",
+    ]
+    if totals["has_discount"]:
+        lines.append(f"Discount: - {totals['discount']}")
+    lines.extend(
+        [
+            f"Shipping: {totals['shipping']}",
+            f"VAT (5%): {totals['vat']}",
+            f"Total paid: {totals['total']}",
+            "",
+            f"View your order: {_site_url('/myorders')}",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def send_order_confirmation_email(order_id):
     """Send the pending COD/WhatsApp order confirmation once."""
     with transaction.atomic():
@@ -663,29 +858,24 @@ def send_paid_invoice_email(order_id):
             return False
 
         name = _name(order.user, order.address)
-        number = _order_number(order)
+        number = _email_invoice_number(order)
+        items = list(order.items.all())
         pdf = render_tax_invoice(order)
-        filename = f"EEHOOK-{number}-invoice.pdf"
-        text_body = (
-            f"Paid invoice — {number}\n\nHi {name}, you’re all HOOKED in!\n\n"
-            "Thank you for shopping with EEHOOK. Your payment has been received and your order is being prepared. "
-            f"Your invoice is attached for your records.\n\nTotal paid: {_money(order.total_amount)}\n"
-        )
-        html_body = _email_shell(
-            "PAYMENT RECEIVED",
-            f"""
-            <p style=\"font-size:20px;font-weight:700;color:#111\">Hi {escape(name)}, you’re all HOOKED in!</p>
-            <p style=\"line-height:1.65;color:#424242\">Thank you for shopping with EEHOOK. Your payment has been received and your order is being prepared. Your invoice is attached for your records.</p>
-            <div style=\"margin:24px 0;padding:18px;border-radius:9px;background:#e9f7ef;border:1px solid #b8dfc7\"><strong>PAID</strong><br>Order {escape(number)}<br>Total paid: <strong>{escape(_money(order.total_amount))}</strong></div>
-            <p><a href=\"{escape(_site_url(f'/profile'))}\" style=\"display:inline-block;padding:13px 20px;border-radius:7px;background:#ff9000;color:#111;text-decoration:none;font-weight:800\">VIEW MY ORDERS</a></p>
-            """,
+        filename = f"EEHOOK-{_order_number(order)}-invoice.pdf"
+        text_body = _invoice_email_text(order, name, number, items)
+        html_body = _invoice_email_html(
+            order,
+            name,
+            number,
+            items,
         )
         message = _text_and_html(
-            f"Paid invoice — {number}",
+            f"Paid invoice - {number}",
             text_body,
             html_body,
             order.user.email,
             attachment=(filename, pdf, "application/pdf"),
+            inline_images=(("eehook-logo", EMAIL_LOGO_PATH),),
         )
         if not _send(message):
             return False

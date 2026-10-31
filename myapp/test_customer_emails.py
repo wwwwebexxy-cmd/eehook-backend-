@@ -255,11 +255,33 @@ class CustomerEmailTests(TestCase):
         message = mail.outbox[0]
         self.assertIn("Paid invoice", message.subject)
         self.assertIn("Your payment has been received", message.body)
-        self.assertEqual(len(message.attachments), 1)
-        attachment = message.attachments[0]
+        html = message.alternatives[0][0]
+        self.assertIn("INVOICE", html)
+        self.assertIn("PAID", html)
+        self.assertIn("BILLED TO", html)
+        self.assertIn("ORDER DETAILS", html)
+        self.assertIn("WHERE&apos;S MY ORDER?", html)
+        self.assertIn("Buy More", html)
+        self.assertIn("My Account", html)
+        self.assertIn("cid:eehook-logo", html)
+        pdf_attachments = [
+            attachment
+            for attachment in message.attachments
+            if isinstance(attachment, tuple)
+            and len(attachment) == 3
+            and attachment[2] == "application/pdf"
+        ]
+        self.assertEqual(len(pdf_attachments), 1)
+        attachment = pdf_attachments[0]
         self.assertTrue(attachment[0].endswith(".pdf"))
         self.assertEqual(attachment[2], "application/pdf")
         self.assertTrue(attachment[1].startswith(b"%PDF"))
+        self.assertTrue(
+            any(
+                part.get("Content-ID") == "<eehook-logo>"
+                for part in message.message().walk()
+            )
+        )
         self.assertIsNotNone(Order.objects.get(pk=order.pk).paid_invoice_email_sent_at)
 
         self.assertFalse(send_paid_invoice_email(order.id))
