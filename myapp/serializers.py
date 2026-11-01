@@ -2071,8 +2071,10 @@ class WelcomeBonusSerializer(serializers.ModelSerializer):
                 "PRODUCT_WISE": WelcomeBonus.APPLICABILITY_PRODUCT,
                 "CATEGORY_WISE": WelcomeBonus.APPLICABILITY_CATEGORY,
             }.get(apply_to, apply_to)
-        if "product" in data and "products" not in data:
-            data["products"] = [data["product"]]
+        if "product" in data:
+            legacy_product = data.pop("product")
+            if "products" not in data and legacy_product not in (None, ""):
+                data["products"] = [legacy_product]
         if "discount_type" in data:
             discount_type = str(data["discount_type"]).upper()
             if discount_type in {"FIXED_AMOUNT", "FIXED AMOUNT"}:

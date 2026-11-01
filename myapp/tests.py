@@ -2533,6 +2533,29 @@ class WelcomeBonusFlowTests(TestCase):
         self.assertEqual(toggled.status_code, 200, toggled.data)
         self.assertFalse(toggled.data["is_active"])
 
+    def test_category_bonus_accepts_nullable_legacy_product_alias(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.post(
+            "/admin/manage/welcome-bonuses/",
+            {
+                "name": "Category welcome bonus",
+                "applicability_type": WelcomeBonus.APPLICABILITY_CATEGORY,
+                "product": None,
+                "category": self.category.id,
+                "subcategory": None,
+                "discount_type": WelcomeBonus.DISCOUNT_FIXED,
+                "fixed_amount": "5.00",
+                "discount_percentage": None,
+                "start_date": timezone.now() - timedelta(minutes=1),
+                "end_date": timezone.now() + timedelta(days=1),
+                "is_active": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["category"], self.category.id)
+        self.assertEqual(response.data["products"], [])
+
 
 @override_settings(SECURE_SSL_REDIRECT=False)
 class OrderPackageLabelTests(TestCase):
