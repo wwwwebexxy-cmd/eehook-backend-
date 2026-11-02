@@ -512,6 +512,45 @@ class SecurityBoundaryTests(TestCase):
         response = self.client.get("/products/")
         self.assertEqual(response.status_code, 429)
 
+    @override_settings(
+        GLOBAL_RATE_LIMIT=1,
+        GLOBAL_RATE_WINDOW=60,
+        TRUSTED_PROXY_IPS=("127.0.0.1", "::1"),
+    )
+    def test_global_rate_limit_uses_real_ip_from_trusted_proxy(self):
+        first = self.client.get(
+            "/products/",
+            REMOTE_ADDR="127.0.0.1",
+            HTTP_X_REAL_IP="203.0.113.10",
+        )
+        second_client = self.client.get(
+            "/products/",
+            REMOTE_ADDR="127.0.0.1",
+            HTTP_X_REAL_IP="203.0.113.11",
+        )
+
+        self.assertNotEqual(first.status_code, 429)
+        self.assertNotEqual(second_client.status_code, 429)
+
+    @override_settings(
+        GLOBAL_RATE_LIMIT=1,
+        GLOBAL_RATE_WINDOW=60,
+        TRUSTED_PROXY_IPS=("127.0.0.1", "::1"),
+    )
+    def test_global_rate_limit_does_not_trust_real_ip_from_untrusted_peer(self):
+        self.client.get(
+            "/products/",
+            REMOTE_ADDR="203.0.113.20",
+            HTTP_X_REAL_IP="203.0.113.21",
+        )
+        response = self.client.get(
+            "/products/",
+            REMOTE_ADDR="203.0.113.20",
+            HTTP_X_REAL_IP="203.0.113.22",
+        )
+
+        self.assertEqual(response.status_code, 429)
+
 
 @override_settings(
     SECURE_SSL_REDIRECT=False,

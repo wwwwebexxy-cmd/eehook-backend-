@@ -7,6 +7,7 @@ deployments; the local-memory backend is suitable only for development.
 """
 
 import hashlib
+import ipaddress
 
 from django.conf import settings
 from django.core.cache import cache
@@ -24,8 +25,20 @@ class AbuseProtectionMiddleware:
 
     @staticmethod
     def _client_ip(request):
-        # Do not trust X-Forwarded-For unless a trusted proxy has normalized it.
-        return request.META.get("REMOTE_ADDR") or "unknown"
+        # Gunicorn is bound to localhost, so only a local reverse proxy can
+        # reach it in production. Trust the proxy's normalized X-Real-IP value
+        # only when the direct peer is explicitly configured as trusted.
+        remote_ip = (request.META.get("REMOTE_ADDR") or "").strip()
+        trusted_proxy_ips = set(getattr(settings, "TRUSTED_PROXY_IPS", ()))
+        if remote_ip not in trusted_proxy_ips:
+            return remote_ip or "unknown"
+
+        forwarded_ip = (request.META.get("HTTP_X_REAL_IP") or "").strip()
+        try:
+            ipaddress.ip_address(forwarded_ip)
+        except ValueError:
+            return remote_ip or "unknown"
+        return forwarded_ip
 
     @staticmethod
     def _key(prefix, value):
