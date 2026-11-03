@@ -9,6 +9,7 @@ from datetime import timedelta
 import os
 import sys
 from dotenv import load_dotenv
+from corsheaders.defaults import default_headers
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -300,6 +301,7 @@ if DEBUG:
             CORS_ALLOWED_ORIGINS.append(_local_origin)
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = (*default_headers, "idempotency-key")
 CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS.copy()
 if "*" in CORS_ALLOWED_ORIGINS:
     raise RuntimeError("STOREFRONT_ORIGINS must not contain a wildcard origin")
