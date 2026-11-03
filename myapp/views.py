@@ -944,7 +944,7 @@ def _user_signal_product_ids(user):
     return ids
 
 
-def _just_for_you_products(request):
+def _just_for_you_products(request, fallback_products=None):
     selected = []
     selected_ids = set()
     signal_ids = []
@@ -997,8 +997,15 @@ def _just_for_you_products(request):
                 selected_ids.add(product.id)
 
     # Guests and users without enough useful signals get real catalog
-    # fallbacks. The same product is never repeated inside this section.
-    for queryset in (_trending_products(), _best_seller_products(), _new_homepage_products()):
+    # fallbacks. Reuse the already-built homepage querysets when available;
+    # rebuilding these ranking querysets here used to repeat the most
+    # expensive homepage database work for every request.
+    fallback_products = fallback_products or (
+        _trending_products(),
+        _best_seller_products(),
+        _new_homepage_products(),
+    )
+    for queryset in fallback_products:
         if len(selected) >= HOMEPAGE_PRODUCT_LIMIT:
             break
         for product in queryset:
@@ -1049,6 +1056,14 @@ def homepage(request):
         )
     )
     recently_viewed = _recently_viewed_products(request)
+    new_arrivals = _new_homepage_products()
+    trending_now = _trending_products()
+    top_deals = _top_deal_products()
+    best_sellers = _best_seller_products()
+    just_for_you = _just_for_you_products(
+        request,
+        fallback_products=(trending_now, best_sellers, new_arrivals),
+    )
 
     return Response(
         {
@@ -1058,16 +1073,26 @@ def homepage(request):
                 many=True,
                 context={"request": request},
             ).data,
+            "promo_banners": PromoBannerSerializer(
+                PromoBanner.objects.filter(is_active=True),
+                many=True,
+                context={"request": request},
+            ).data,
+            "hero_side_banners": HeroSideBannerSerializer(
+                HeroSideBanner.objects.filter(is_active=True).order_by("id"),
+                many=True,
+                context={"request": request},
+            ).data,
             "categories": HomeCategorySerializer(
                 categories,
                 many=True,
                 context={"request": request},
             ).data,
-            "new_arrivals": _homepage_product_data(_new_homepage_products(), request),
-            "trending_now": _homepage_product_data(_trending_products(), request),
-            "top_deals": _homepage_product_data(_top_deal_products(), request),
-            "best_sellers": _homepage_product_data(_best_seller_products(), request),
-            "just_for_you": _homepage_product_data(_just_for_you_products(request), request),
+            "new_arrivals": _homepage_product_data(new_arrivals, request),
+            "trending_now": _homepage_product_data(trending_now, request),
+            "top_deals": _homepage_product_data(top_deals, request),
+            "best_sellers": _homepage_product_data(best_sellers, request),
+            "just_for_you": _homepage_product_data(just_for_you, request),
             "shop_by_brand": HomepageBrandSerializer(
                 _homepage_brands(),
                 many=True,

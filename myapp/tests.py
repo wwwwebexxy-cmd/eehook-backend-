@@ -1953,6 +1953,8 @@ class HomepageDiscoveryTests(TestCase):
 
         response = self.client.get("/homepage/")
         self.assertEqual(response.status_code, 200, response.data)
+        self.assertIn("promo_banners", response.data)
+        self.assertIn("hero_side_banners", response.data)
         self.assertIn(trending.id, [item["id"] for item in response.data["trending_now"]])
         self.assertEqual(
             [item["id"] for item in response.data["top_deals"]],
