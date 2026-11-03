@@ -711,10 +711,26 @@ def _homepage_product_queryset(products=None):
     if products is None:
         products = Product.objects.filter(is_active=True)
 
+    offer_queryset = Offer.objects.only(
+        "id",
+        "discount_type",
+        "discount_percentage",
+        "fixed_amount",
+        "start_date",
+        "end_date",
+        "is_active",
+        "created_at",
+    ).prefetch_related(
+        Prefetch("variants", queryset=ProductVariant.objects.only("id")),
+    )
     variant_queryset = (
         ProductVariant.objects
         .select_related("color")
-        .prefetch_related("images", "sizes__unit__unit_type")
+        .prefetch_related(
+            "images",
+            "sizes__unit__unit_type",
+            Prefetch("offers", queryset=offer_queryset),
+        )
         .order_by("id")
     )
     highlight_queryset = ProductHighlight.objects.filter(is_active=True).order_by(
@@ -733,6 +749,7 @@ def _homepage_product_queryset(products=None):
         .select_related("category", "subcategory", "brand", "offer")
         .prefetch_related(
             Prefetch("variants", queryset=variant_queryset),
+            Prefetch("offers", queryset=offer_queryset),
             Prefetch("marketing_highlights", queryset=highlight_queryset),
             Prefetch("product_messages", queryset=message_queryset),
         )

@@ -17,33 +17,66 @@ def get_offer_for_product(product, variant=None):
 
     product_id = getattr(product, "pk", product)
     today = timezone.now().date()
-    product_offers = Offer.objects.filter(products__pk=product_id)
+    prefetched_product_offers = getattr(product, "_prefetched_objects_cache", {}).get("offers")
+    product_offers = (
+        list(prefetched_product_offers)
+        if prefetched_product_offers is not None
+        else Offer.objects.filter(products__pk=product_id)
+    )
+
+    def is_active(offer):
+        return (
+            offer.is_active
+            and offer.start_date <= today <= offer.end_date
+        )
+
+    def offer_variant_ids(offer):
+        prefetched_variants = getattr(offer, "_prefetched_objects_cache", {}).get("variants")
+        if prefetched_variants is not None:
+            return {item.pk for item in prefetched_variants}
+        return set(offer.variants.values_list("pk", flat=True))
 
     if variant is not None:
         variant_id = getattr(variant, "pk", variant)
-        selected_offer = (
-            product_offers
-            .filter(variants__pk=variant_id)
-            .filter(is_active=True, start_date__lte=today, end_date__gte=today)
-            .order_by("-created_at", "-pk")
-            .first()
+        prefetched_variant_offers = getattr(variant, "_prefetched_objects_cache", {}).get("offers")
+        variant_offer_ids = (
+            {offer.pk for offer in prefetched_variant_offers}
+            if prefetched_variant_offers is not None
+            else None
+        )
+        selected_offer = max(
+            (
+                offer
+                for offer in product_offers
+                if is_active(offer)
+                and (
+                    variant_offer_ids is not None
+                    and offer.pk in variant_offer_ids
+                    or variant_offer_ids is None
+                    and variant_id in offer_variant_ids(offer)
+                )
+            ),
+            key=lambda offer: (offer.created_at, offer.pk),
+            default=None,
         )
         if selected_offer:
             return selected_offer
 
-    all_variants_offer = (
-        product_offers
-        .filter(variants__isnull=True)
-        .filter(is_active=True, start_date__lte=today, end_date__gte=today)
-        .order_by("-created_at", "-pk")
-        .first()
+    all_variants_offer = max(
+        (
+            offer
+            for offer in product_offers
+            if is_active(offer) and not offer_variant_ids(offer)
+        ),
+        key=lambda offer: (offer.created_at, offer.pk),
+        default=None,
     )
     if all_variants_offer:
         return all_variants_offer
 
     # If this product already has new dashboard offers, do not let a stale
     # legacy Product.offer leak onto a variant excluded from those offers.
-    if product_offers.exists():
+    if product_offers:
         return None
 
     legacy_offer = getattr(product, "offer", None)

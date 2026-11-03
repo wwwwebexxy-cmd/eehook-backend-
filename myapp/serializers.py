@@ -1639,7 +1639,11 @@ class HomepageProductSerializer(serializers.ModelSerializer):
         ]
 
     def _price_values(self, obj):
-        return get_product_prices(obj)
+        if not hasattr(self, "_homepage_price_cache"):
+            self._homepage_price_cache = {}
+        if obj.pk not in self._homepage_price_cache:
+            self._homepage_price_cache[obj.pk] = get_product_prices(obj)
+        return self._homepage_price_cache[obj.pk]
 
     def get_marketing_highlights(self, obj):
         return ProductHighlightSerializer(
