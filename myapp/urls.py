@@ -9,6 +9,7 @@ urlpatterns = [
     path("register/",views.register),
     path("token/refresh/", ThrottledTokenRefreshView.as_view(), name="token_refresh"),
     path("google-login/", views.google_login),
+    path("google-login/redirect/", views.google_login_redirect),
     path("login/",views.login),
     path("logout/", views.logout),
     path("forgot-password/",views.forgot_password),

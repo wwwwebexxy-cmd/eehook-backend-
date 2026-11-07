@@ -9,8 +9,8 @@ Set these values in the deployment environment or an untracked `.env` file:
 
 ```dotenv
 GOOGLE_CLIENT_ID=<Google Web application client ID>
-SITE_URL=https://eehook-frondent-web.vercel.app
-STOREFRONT_ORIGINS=https://eehook-frondent-web.vercel.app
+SITE_URL=https://eehook.com
+STOREFRONT_ORIGINS=https://eehook.com,https://staging.eehook.com,https://eehook-frondent-web.vercel.app
 
 EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
 EMAIL_HOST=smtp.gmail.com
@@ -55,19 +55,30 @@ Add these Authorized JavaScript origins:
 ```text
 http://localhost:5173
 http://127.0.0.1:5173
+https://eehook.com
+https://staging.eehook.com
 https://eehook-frondent-web.vercel.app
 ```
 
-Add any real custom storefront origin only after it is known and deployed.
-The current React integration uses Google Identity Services' credential
-response (`@react-oauth/google`), so it does not use an OAuth redirect URI.
-Do not add `/google-login/` as a redirect URI. If the flow is later changed to
-redirect-based OAuth, configure the exact callback URL required by that flow.
+Add these exact Authorized redirect URIs as well. The redirect flow is required
+for Safari and Chrome on iOS because of Intelligent Tracking Prevention (ITP):
+
+```text
+https://eehook.com/backend/google-login/redirect/
+https://staging.eehook.com/backend/google-login/redirect/
+https://eehook-frondent-web.vercel.app/backend/google-login/redirect/
+```
+
+The React integration keeps the popup credential flow for desktop and Android,
+and automatically uses the redirect URI above on iPhone/iPad browsers.
 
 The Django endpoint `POST /google-login/` validates the ID token signature,
 issuer, audience, expiry, and verified-email claim with `GOOGLE_CLIENT_ID`.
 It links a verified email to the existing unique user or creates one customer
-account, then issues the existing HttpOnly JWT cookies.
+account, then issues the existing HttpOnly JWT cookies. The redirect endpoint
+`POST /google-login/redirect/` validates Google's GIS double-submit CSRF token,
+performs the same ID-token validation, and issues the same cookies before
+returning to the storefront.
 
 ## Password reset flow
 

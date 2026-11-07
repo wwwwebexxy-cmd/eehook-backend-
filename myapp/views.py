@@ -35,6 +35,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
 from django.http import HttpResponse, JsonResponse
+from django.shortcuts import redirect
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework_simplejwt.token_blacklist.models import (
@@ -64,6 +65,7 @@ from google.oauth2 import id_token
 from google.auth.transport import requests
 
 import csv
+from urllib.parse import urlencode, urlparse
 
 import logging
 from google.auth.exceptions import GoogleAuthError
@@ -202,121 +204,184 @@ def auth_session(request):
     get_token(request)
     return Response({"user": _safe_session_user(request.user)})
 
-@api_view(["POST"])
-@throttle_classes([AuthRateThrottle])
-def google_login(request):
+class GoogleLoginFailure(Exception):
+    """A safe, user-facing Google login failure without provider details."""
 
-    token = request.data.get("token")
-    login_type = request.data.get("login_type", "customer")
+    def __init__(self, status_code, payload, redirect_code):
+        super().__init__(redirect_code)
+        self.status_code = status_code
+        self.payload = payload
+        self.redirect_code = redirect_code
 
+
+def _authenticate_google_user(token, login_type="customer"):
     if login_type not in ("customer", "super_admin"):
-        return Response(
+        raise GoogleLoginFailure(
+            status.HTTP_400_BAD_REQUEST,
             {"detail": "Invalid login type."},
-            status=status.HTTP_400_BAD_REQUEST,
+            "invalid_login_type",
         )
 
     if not token:
-        return Response(
+        raise GoogleLoginFailure(
+            status.HTTP_400_BAD_REQUEST,
             {"error": "Google token is required."},
-            status=status.HTTP_400_BAD_REQUEST
+            "missing_credential",
         )
 
     if not settings.GOOGLE_CLIENT_ID:
         logger.error("Google authentication is unavailable: GOOGLE_CLIENT_ID is not configured.")
-        return Response(
+        raise GoogleLoginFailure(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
             {"error": "Google sign-in is not configured. Please use email and password."},
-            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            "unavailable",
         )
 
+    info = id_token.verify_oauth2_token(
+        token,
+        requests.Request(),
+        settings.GOOGLE_CLIENT_ID,
+        clock_skew_in_seconds=30,
+    )
+
+    email = str(info.get("email") or "").strip().lower()
+    first_name = str(info.get("given_name") or "").strip()
+
+    # google-auth verifies the signature, issuer, audience, and expiry for
+    # this ID token. Only accept the provider's boolean verification flag
+    # as well; a client-submitted email address is never trusted here.
+    if not email or info.get("email_verified") is not True:
+        raise GoogleLoginFailure(
+            status.HTTP_400_BAD_REQUEST,
+            {"error": "A verified Google account email is required."},
+            "unverified",
+        )
+
+    # Email is the existing account identity in this project. A verified
+    # Google email therefore links to an existing account instead of
+    # creating a duplicate, while a new Google account gets the same
+    # profile record as a password registration.
+    with transaction.atomic():
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={
+                "first_name": first_name,
+                "is_active": True,
+            },
+        )
+
+        if created:
+            user.set_unusable_password()
+            user.save(update_fields=["password"])
+
+        UserProfile.objects.get_or_create(user=user)
+
+    if not user.is_active:
+        raise GoogleLoginFailure(
+            status.HTTP_403_FORBIDDEN,
+            {"detail": "This account is disabled."},
+            "disabled",
+        )
+
+    if created and login_type == "customer":
+        from .customer_emails import send_registration_email
+
+        send_registration_email(user.id)
+
+    if login_type == "customer" and (user.role != "Customer" or user.is_staff or user.is_superuser):
+        raise GoogleLoginFailure(
+            status.HTTP_403_FORBIDDEN,
+            {"detail": "Admin accounts must use the Super Admin login page."},
+            "not_allowed",
+        )
+    if login_type == "super_admin" and user.role != "Super Admin":
+        raise GoogleLoginFailure(
+            status.HTTP_403_FORBIDDEN,
+            {"detail": "Only Super Admin accounts can access this login."},
+            "not_allowed",
+        )
+
+    return user
+
+
+def _google_redirect_frontend_url(request, *, error=None):
+    """Use only an explicitly allowed storefront origin for redirect targets."""
+    allowed_origins = set(getattr(settings, "CORS_ALLOWED_ORIGINS", ()))
+    candidates = [request.headers.get("Origin", "")]
+    referer = request.headers.get("Referer", "")
+    if referer:
+        parsed_referer = urlparse(referer)
+        candidates.append(f"{parsed_referer.scheme}://{parsed_referer.netloc}")
+
+    origin = next(
+        (candidate.rstrip("/") for candidate in candidates if candidate.rstrip("/") in allowed_origins),
+        settings.SITE_URL.rstrip("/"),
+    )
+    target = f"{origin}/login" if error else f"{origin}/"
+    if error:
+        target = f"{target}?{urlencode({'google_error': error})}"
+    return target
+
+
+def _google_login_failure_response(failure):
+    return Response(failure.payload, status=failure.status_code)
+
+
+@api_view(["POST"])
+@throttle_classes([AuthRateThrottle])
+def google_login(request):
     try:
-
-        info = id_token.verify_oauth2_token(
-            token,
-            requests.Request(),
-            settings.GOOGLE_CLIENT_ID,
-            clock_skew_in_seconds=30
+        user = _authenticate_google_user(
+            request.data.get("token"),
+            request.data.get("login_type", "customer"),
         )
-
-        email = str(info.get("email") or "").strip().lower()
-        first_name = str(info.get("given_name") or "").strip()
-
-        # google-auth verifies the signature, issuer, audience, and expiry for
-        # this ID token. Only accept the provider's boolean verification flag
-        # as well; a client-submitted email address is never trusted here.
-        if not email or info.get("email_verified") is not True:
-            return Response(
-                {"error": "A verified Google account email is required."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Email is the existing account identity in this project. A verified
-        # Google email therefore links to an existing account instead of
-        # creating a duplicate, while a new Google account gets the same
-        # profile record as a password registration.
-        with transaction.atomic():
-            user, created = User.objects.get_or_create(
-                email=email,
-                defaults={
-                    "first_name": first_name,
-                    "is_active": True,
-                }
-            )
-
-            if created:
-                user.set_unusable_password()
-                user.save(update_fields=["password"])
-
-            UserProfile.objects.get_or_create(user=user)
-
-        if not user.is_active:
-            return Response(
-                {"detail": "This account is disabled."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        if created and login_type == "customer":
-            from .customer_emails import send_registration_email
-
-            send_registration_email(user.id)
-
-        if login_type == "customer" and (user.role != "Customer" or user.is_staff or user.is_superuser):
-            return Response(
-                {"detail": "Admin accounts must use the Super Admin login page."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        if login_type == "super_admin" and user.role != "Super Admin":
-            return Response(
-                {"detail": "Only Super Admin accounts can access this login."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
         refresh = RefreshToken.for_user(user)
-
         response = Response({"user": _safe_session_user(user)})
         return set_auth_cookies(
             response,
             access_token=str(refresh.access_token),
             refresh_token=str(refresh),
-            scope="admin" if login_type == "super_admin" else "customer",
+            scope="admin" if request.data.get("login_type", "customer") == "super_admin" else "customer",
         )
-
+    except GoogleLoginFailure as failure:
+        return _google_login_failure_response(failure)
     except (GoogleAuthError, ValueError):
         return Response(
-            {
-                "error": "The Google credential is invalid or expired. Please try again."
-            },
-            status=status.HTTP_400_BAD_REQUEST
+            {"error": "The Google credential is invalid or expired. Please try again."},
+            status=status.HTTP_400_BAD_REQUEST,
         )
-
     except Exception:
         logger.exception("Google authentication provider failure")
-
         return Response(
-            {
-                "error": "Something went wrong. Please try again later."
-            },
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            {"error": "Something went wrong. Please try again later."},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
+
+
+@api_view(["POST"])
+@throttle_classes([AuthRateThrottle])
+def google_login_redirect(request):
+    """Handle GIS redirect-mode form posts required by iOS ITP browsers."""
+    if request.data.get("g_csrf_token") != request.COOKIES.get("g_csrf_token"):
+        return redirect(_google_redirect_frontend_url(request, error="csrf"))
+
+    try:
+        user = _authenticate_google_user(request.data.get("credential"))
+        refresh = RefreshToken.for_user(user)
+        response = redirect(_google_redirect_frontend_url(request))
+        return set_auth_cookies(
+            response,
+            access_token=str(refresh.access_token),
+            refresh_token=str(refresh),
+            scope="customer",
+        )
+    except GoogleLoginFailure as failure:
+        return redirect(_google_redirect_frontend_url(request, error=failure.redirect_code))
+    except (GoogleAuthError, ValueError):
+        return redirect(_google_redirect_frontend_url(request, error="invalid_credential"))
+    except Exception:
+        logger.exception("Google redirect authentication provider failure")
+        return redirect(_google_redirect_frontend_url(request, error="provider_error"))
 
 @api_view(["POST"])
 @throttle_classes([AuthRateThrottle])
