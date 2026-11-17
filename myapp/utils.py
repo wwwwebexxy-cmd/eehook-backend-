@@ -200,6 +200,75 @@ def calculate_offer_price(price, offer):
     )
 
 
+def calculate_effective_price(price, offer=None, direct_offer_price=None):
+    """Return the sell price for a variant or unit.
+
+    A direct offer price is an optional catalog-level override.  It is kept
+    separate from dated Offer records so used-product combinations can have
+    their own prices without creating an Offer per combination.
+    """
+    base_price = Decimal(str(price or 0)).quantize(Decimal("0.01"))
+    if direct_offer_price not in (None, ""):
+        sale_price = Decimal(str(direct_offer_price))
+        return min(max(sale_price, Decimal("0.00")), base_price).quantize(Decimal("0.01"))
+    return calculate_offer_price(base_price, offer)
+
+
+def get_variant_base_price(variant, variant_unit=None):
+    """Return the catalog price for one selected variant combination."""
+    if not variant:
+        return Decimal("0.00")
+    if variant.price_type == "single":
+        return Decimal(str(variant.price or 0)).quantize(Decimal("0.01"))
+    return Decimal(str(getattr(variant_unit, "price", None) or 0)).quantize(Decimal("0.01"))
+
+
+def get_variant_price_breakdown(variant, variant_unit=None, offer=None):
+    """Return current pricing, including a direct variant/unit sale price."""
+    base_price = get_variant_base_price(variant, variant_unit)
+    direct_offer_price = getattr(
+        variant if variant and variant.price_type == "single" else variant_unit,
+        "offer_price",
+        None,
+    )
+    return get_price_breakdown(base_price, offer, direct_offer_price)
+
+
+def get_price_breakdown(price, offer=None, direct_offer_price=None):
+    base_price = Decimal(str(price or 0)).quantize(Decimal("0.01"))
+    effective_price = calculate_effective_price(price, offer, direct_offer_price)
+    discount_amount = max(base_price - effective_price, Decimal("0.00")).quantize(Decimal("0.01"))
+    active_dated_offer = is_offer_valid(offer)
+    has_direct_offer = direct_offer_price not in (None, "") and discount_amount > 0
+    if has_direct_offer:
+        discount_type = "FIXED"
+        discount_value = discount_amount
+    elif active_dated_offer:
+        discount_type = offer.discount_type
+        discount_value = (
+            offer.fixed_amount
+            if offer.discount_type == "FIXED"
+            else offer.discount_percentage
+        )
+    else:
+        discount_type = None
+        discount_value = None
+    percentage = (
+        (discount_amount * Decimal("100") / base_price).quantize(Decimal("0.01"))
+        if base_price > 0
+        else Decimal("0.00")
+    )
+    return {
+        "original_price": base_price,
+        "discounted_price": effective_price,
+        "discount_amount": discount_amount,
+        "has_offer": bool(has_direct_offer or active_dated_offer and discount_amount > 0),
+        "discount_percentage": percentage,
+        "offer_discount_type": discount_type,
+        "offer_discount_value": discount_value,
+    }
+
+
 def calculate_discount_amount(price, offer):
 
     price = Decimal(str(price))
@@ -277,19 +346,22 @@ def get_product_prices(product):
         if variant.price_type == "single":
             if variant.price is not None:
                 price = Decimal(str(variant.price))
-                entries.append((price, get_offer_for_product(product, variant)))
+                entries.append(
+                    (price, get_offer_for_product(product, variant), variant.offer_price)
+                )
             continue
 
         entries.extend(
             (
                 Decimal(str(unit.price)),
                 get_offer_for_product(product, variant),
+                unit.offer_price,
             )
             for unit in variant.sizes.all()
             if unit.price is not None
         )
 
-    prices = [price for price, _offer in entries]
+    prices = [price for price, _offer, _direct_offer_price in entries]
 
     if not prices:
 
@@ -308,44 +380,25 @@ def get_product_prices(product):
 
     starting_price = min(prices)
     discounted_entries = [
-        (price, calculate_offer_price(price, offer), offer)
-        for price, offer in entries
+        (price, get_price_breakdown(price, offer, direct_offer_price), offer)
+        for price, offer, direct_offer_price in entries
     ]
-    original_price, discounted_price, best_offer = min(
+    original_price, best_breakdown, _best_offer = min(
         discounted_entries,
-        key=lambda entry: (entry[1], entry[0]),
-    )
-    discount_amount = max(original_price - discounted_price, Decimal("0.00"))
-    has_offer = any(is_offer_valid(offer) for _price, offer in entries)
-    discount_percentage = (
-        get_offer_discount_percentage(original_price, best_offer)
-        if is_offer_valid(best_offer)
-        else Decimal("0.00")
+        key=lambda entry: (entry[1]["discounted_price"], entry[0]),
     )
 
     return {
         "starting_price": starting_price.quantize(
             Decimal("0.01")
         ),
-        "original_price": original_price.quantize(
-            Decimal("0.01")
-        ),
-        "discounted_price": discounted_price.quantize(
-            Decimal("0.01")
-        ),
-        "discount_amount": discount_amount.quantize(
-            Decimal("0.01")
-        ),
-        "has_offer": has_offer,
-        "discount_percentage": discount_percentage,
-        "offer_discount_type": best_offer.discount_type if is_offer_valid(best_offer) else None,
-        "offer_discount_value": (
-            best_offer.fixed_amount
-            if is_offer_valid(best_offer) and best_offer.discount_type == "FIXED"
-            else best_offer.discount_percentage
-            if is_offer_valid(best_offer)
-            else None
-        ),
+        "original_price": best_breakdown["original_price"],
+        "discounted_price": best_breakdown["discounted_price"],
+        "discount_amount": best_breakdown["discount_amount"],
+        "has_offer": best_breakdown["has_offer"],
+        "discount_percentage": best_breakdown["discount_percentage"],
+        "offer_discount_type": best_breakdown["offer_discount_type"],
+        "offer_discount_value": best_breakdown["offer_discount_value"],
     }
 from rest_framework.throttling import SimpleRateThrottle
 

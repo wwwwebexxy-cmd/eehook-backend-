@@ -74,6 +74,7 @@ from .utils import (
     SearchRateThrottle,
     calculate_cart_shipping,
     calculate_order_total,
+    get_variant_price_breakdown,
     get_offer_for_product,
 )
 from .auth_cookies import auth_cookie_names, clear_auth_cookies, normalize_auth_scope, set_auth_cookies
@@ -1768,11 +1769,11 @@ def get_cart(request):
 
     for item in cart_items:
 
-        price = (item.variant.price or 0) if item.variant.price_type == "single" else ((item.variant_unit.price or 0) if item.variant_unit else 0)
-        discounted_price = calculate_offer_price(
-            price,
-            get_offer_for_product(item.variant.product, item.variant)
-        )
+        discounted_price = get_variant_price_breakdown(
+            item.variant,
+            item.variant_unit,
+            get_offer_for_product(item.variant.product, item.variant),
+        )["discounted_price"]
         source, promotion = current_promotions.get(item.id, (None, None))
         if promotion:
             discounted_price = _apply_cart_promotion_price(
@@ -1857,15 +1858,12 @@ def update_cart_quantity(request, id):
 
     cart.save()
 
-    original_price = (
-        cart.variant.price
-        if cart.variant.price_type == "single"
-        else (cart.variant_unit.price if cart.variant_unit else 0)
+    current_breakdown = get_variant_price_breakdown(
+        cart.variant,
+        cart.variant_unit,
+        get_offer_for_product(cart.variant.product, cart.variant),
     )
-    discounted_price = calculate_offer_price(
-        original_price or 0,
-        get_offer_for_product(cart.variant.product, cart.variant)
-    )
+    discounted_price = current_breakdown["discounted_price"]
     if current_promotion:
         discounted_price = _apply_cart_promotion_price(
             discounted_price,
@@ -1895,15 +1893,11 @@ def update_cart_quantity(request, id):
 
         item_source, item_promotion = _refresh_cart_promotion(item)
 
-        item_price = (
-            item.variant.price
-            if item.variant.price_type == "single"
-            else (item.variant_unit.price if item.variant_unit else 0)
-        )
-        item_discounted_price = calculate_offer_price(
-            item_price or 0,
+        item_discounted_price = get_variant_price_breakdown(
+            item.variant,
+            item.variant_unit,
             get_offer_for_product(item.variant.product, item.variant),
-        )
+        )["discounted_price"]
         if item_promotion:
             item_discounted_price = _apply_cart_promotion_price(
                 item_discounted_price,
@@ -2061,12 +2055,13 @@ def place_order(request):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        original_price = (item.variant.price or 0) if item.variant.price_type == "single" else ((item.variant_unit.price or 0) if item.variant_unit else 0)
-
-        discounted_price = calculate_offer_price(
-            original_price,
-            get_offer_for_product(item.variant.product, item.variant)
+        price_breakdown = get_variant_price_breakdown(
+            item.variant,
+            item.variant_unit,
+            get_offer_for_product(item.variant.product, item.variant),
         )
+        original_price = price_breakdown["original_price"]
+        discounted_price = price_breakdown["discounted_price"]
         promotion_source, current_promotion = _refresh_cart_promotion(item)
         if current_promotion:
             before_promotion = discounted_price
@@ -2126,12 +2121,13 @@ def place_order(request):
     
     for item in cart_items:
 
-        original_price = (item.variant.price or 0) if item.variant.price_type == "single" else ((item.variant_unit.price or 0) if item.variant_unit else 0)
-
-        discounted_price = calculate_offer_price(
-            original_price,
-            get_offer_for_product(item.variant.product, item.variant)
+        price_breakdown = get_variant_price_breakdown(
+            item.variant,
+            item.variant_unit,
+            get_offer_for_product(item.variant.product, item.variant),
         )
+        original_price = price_breakdown["original_price"]
+        discounted_price = price_breakdown["discounted_price"]
         promotion_source, current_promotion = _refresh_cart_promotion(item)
         if current_promotion:
             discounted_price = _apply_cart_promotion_price(

@@ -57,7 +57,8 @@ from .customer_emails import send_paid_invoice_email
 from .sku import assign_generated_variant_sku, assign_generated_variant_unit_sku
 from .permissions import IsSuperAdmin
 from .catalog_pricing import get_product_price_values
-from .serializers import CouponSerializer, OfferSerializer
+from .utils import get_offer_for_product, get_price_breakdown
+from .serializers import CouponSerializer, OfferSerializer, SubCategorySerializer
 
 
 class SuperAdminPagination(PageNumberPagination):
@@ -134,6 +135,13 @@ class AdminProductSerializer(serializers.ModelSerializer):
         max_length=4,
     )
     manual_related_products = serializers.SerializerMethodField(read_only=True)
+    subcategories = serializers.SerializerMethodField(read_only=True)
+    subcategory_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        write_only=True,
+        required=False,
+        allow_empty=True,
+    )
 
     class Meta:
         model = Product
@@ -141,6 +149,9 @@ class AdminProductSerializer(serializers.ModelSerializer):
             "id",
             "category",
             "subcategory",
+            "subcategories",
+            "subcategory_ids",
+            "product_type",
             "brand",
             "name",
             "description",
@@ -170,6 +181,22 @@ class AdminProductSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"subcategory": "The subcategory must belong to the selected category."}
             )
+
+        selected_subcategory_ids = attrs.get("subcategory_ids")
+        if selected_subcategory_ids is not None:
+            if len(set(selected_subcategory_ids)) != len(selected_subcategory_ids):
+                raise serializers.ValidationError(
+                    {"subcategory_ids": "Duplicate subcategories are not allowed."}
+                )
+            selected = list(SubCategory.objects.filter(id__in=selected_subcategory_ids))
+            if len(selected) != len(selected_subcategory_ids):
+                raise serializers.ValidationError(
+                    {"subcategory_ids": "Choose existing subcategories only."}
+                )
+            if category and any(item.category_id != category.id for item in selected):
+                raise serializers.ValidationError(
+                    {"subcategory_ids": "All subcategories must belong to the selected category."}
+                )
 
         related_ids = attrs.get("related_product_ids")
         mode = attrs.get(
@@ -225,21 +252,39 @@ class AdminProductSerializer(serializers.ModelSerializer):
             for link in links
         ]
 
+    def get_subcategories(self, obj):
+        selected = list(obj.subcategories.all())
+        if not selected and obj.subcategory_id:
+            selected = [obj.subcategory]
+        return SubCategorySerializer(selected, many=True).data
+
     def create(self, validated_data):
         related_ids = validated_data.pop("related_product_ids", None)
+        selected_subcategory_ids = validated_data.pop("subcategory_ids", None)
+        if selected_subcategory_ids is not None:
+            validated_data["subcategory_id"] = selected_subcategory_ids[0] if selected_subcategory_ids else None
         instance = Product(**validated_data)
         instance.full_clean()
         instance.save()
+        if selected_subcategory_ids is not None:
+            instance.subcategories.set(selected_subcategory_ids)
+        elif instance.subcategory_id:
+            instance.subcategories.set([instance.subcategory_id])
         if instance.related_product_mode == Product.RELATED_PRODUCT_MODE_MANUAL and related_ids:
             self._sync_manual_related_products(instance, related_ids)
         return instance
 
     def update(self, instance, validated_data):
         related_ids = validated_data.pop("related_product_ids", None)
+        selected_subcategory_ids = validated_data.pop("subcategory_ids", None)
+        if selected_subcategory_ids is not None:
+            validated_data["subcategory_id"] = selected_subcategory_ids[0] if selected_subcategory_ids else None
         for field, value in validated_data.items():
             setattr(instance, field, value)
         instance.full_clean()
         instance.save()
+        if selected_subcategory_ids is not None:
+            instance.subcategories.set(selected_subcategory_ids)
         if instance.related_product_mode != Product.RELATED_PRODUCT_MODE_MANUAL:
             ProductRelatedProduct.objects.filter(product=instance).delete()
         elif related_ids is not None:
@@ -249,6 +294,7 @@ class AdminProductSerializer(serializers.ModelSerializer):
 
 class AdminProductVariantSerializer(serializers.ModelSerializer):
     generate_sku = serializers.BooleanField(write_only=True, required=False, default=False)
+    discounted_price = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = ProductVariant
@@ -257,9 +303,12 @@ class AdminProductVariantSerializer(serializers.ModelSerializer):
             "product",
             "color",
             "sku",
+            "option_values",
             "generate_sku",
             "price_type",
             "price",
+            "offer_price",
+            "discounted_price",
             "stock",
         )
         read_only_fields = ("id",)
@@ -267,6 +316,15 @@ class AdminProductVariantSerializer(serializers.ModelSerializer):
     def validate_sku(self, value):
         value = value.strip() if isinstance(value, str) else value
         return value or None
+
+    def get_discounted_price(self, obj):
+        if obj.price_type != "single" or obj.price is None:
+            return None
+        return get_price_breakdown(
+            obj.price,
+            get_offer_for_product(obj.product, obj),
+            obj.offer_price,
+        )["discounted_price"]
 
     def validate(self, attrs):
         if "regions" in self.initial_data:
@@ -276,6 +334,15 @@ class AdminProductVariantSerializer(serializers.ModelSerializer):
 
         price_type = attrs.get("price_type", getattr(self.instance, "price_type", "single"))
         price = attrs.get("price", getattr(self.instance, "price", None))
+        offer_price = attrs.get("offer_price", getattr(self.instance, "offer_price", None))
+        option_values = attrs.get("option_values", getattr(self.instance, "option_values", {})) or {}
+        if not isinstance(option_values, dict):
+            raise serializers.ValidationError({"option_values": "Option values must be an object."})
+        attrs["option_values"] = {
+            str(key).strip().lower(): str(value).strip()
+            for key, value in option_values.items()
+            if str(value).strip()
+        }
         if price_type == "single" and price is None:
             raise serializers.ValidationError(
                 {"price": "A single-price variant requires a price."}
@@ -284,17 +351,25 @@ class AdminProductVariantSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"price": "A multiple-price variant must store prices on its units."}
             )
+        if price_type == "multiple" and offer_price is not None:
+            raise serializers.ValidationError(
+                {"offer_price": "A multiple-price variant must store sale prices on its units."}
+            )
 
         product = attrs.get("product", getattr(self.instance, "product", None))
         color = attrs.get("color", getattr(self.instance, "color", None))
-        if product and color is None:
+        if product:
             duplicate = ProductVariant.objects.filter(
                 product=product,
-                color__isnull=True,
-            ).exclude(pk=getattr(self.instance, "pk", None)).exists()
+                color=color,
+            ).exclude(pk=getattr(self.instance, "pk", None))
+            duplicate = any(
+                (item.option_values or {}) == attrs["option_values"]
+                for item in duplicate.only("option_values")
+            )
             if duplicate:
                 raise serializers.ValidationError(
-                    {"color": "A product can have only one no-color variant."}
+                    {"option_values": "This product variant combination already exists."}
                 )
         return attrs
 
@@ -332,6 +407,7 @@ class AdminProductVariantUnitSerializer(serializers.ModelSerializer):
             "grade",
             "generate_sku",
             "price",
+            "offer_price",
             "stock",
         )
         read_only_fields = ("id",)
@@ -594,7 +670,7 @@ class AdminProductViewSet(AdminModelViewSet):
     queryset = Product.objects.select_related(
         "category", "subcategory", "brand", "offer"
     ).prefetch_related(
-        "related_product_links__related_product"
+        "related_product_links__related_product", "subcategories"
     ).all()
     serializer_class = AdminProductSerializer
     # Product identifiers live on the product's variants in the current
@@ -627,6 +703,7 @@ class AdminProductViewSet(AdminModelViewSet):
             duplicate = Product(
                 category=source.category,
                 subcategory=source.subcategory,
+                product_type=source.product_type,
                 brand=source.brand,
                 offer=source.offer,
                 name=f"{source.name} (Copy)",
@@ -643,6 +720,10 @@ class AdminProductViewSet(AdminModelViewSet):
             )
             duplicate.full_clean()
             duplicate.save()
+            source_subcategory_ids = list(source.subcategories.values_list("id", flat=True))
+            if not source_subcategory_ids and source.subcategory_id:
+                source_subcategory_ids = [source.subcategory_id]
+            duplicate.subcategories.set(source_subcategory_ids)
 
             if source.promotional_banner_image:
                 _copy_stored_file(
@@ -661,6 +742,8 @@ class AdminProductViewSet(AdminModelViewSet):
                     color=source_variant.color,
                     price_type=source_variant.price_type,
                     price=source_variant.price,
+                    offer_price=source_variant.offer_price,
+                    option_values=source_variant.option_values,
                     stock=source_variant.stock,
                 )
                 variant.regions.set(source_variant.regions.all())
@@ -675,6 +758,7 @@ class AdminProductViewSet(AdminModelViewSet):
                         unit=source_unit.unit,
                         grade=source_unit.grade,
                         price=source_unit.price,
+                        offer_price=source_unit.offer_price,
                         stock=source_unit.stock,
                     )
 

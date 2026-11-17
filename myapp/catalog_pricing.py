@@ -2,6 +2,8 @@
 
 from decimal import Decimal
 
+from .utils import calculate_effective_price, get_offer_for_product
+
 
 def get_product_price_values(product):
     """Return all sellable prices for a product in a consistent way."""
@@ -10,11 +12,21 @@ def get_product_price_values(product):
     for variant in product.variants.all():
         if variant.price_type == "single":
             if variant.price is not None:
-                prices.append(Decimal(str(variant.price)))
+                prices.append(
+                    calculate_effective_price(
+                        variant.price,
+                        get_offer_for_product(product, variant),
+                        variant.offer_price,
+                    )
+                )
             continue
 
         prices.extend(
-            Decimal(str(unit.price))
+            calculate_effective_price(
+                unit.price,
+                get_offer_for_product(product, variant),
+                unit.offer_price,
+            )
             for unit in variant.sizes.all()
             if unit.price is not None
         )

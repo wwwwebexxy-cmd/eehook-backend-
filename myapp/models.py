@@ -248,6 +248,13 @@ class Region(models.Model):
 
 class Product(models.Model):
 
+    PRODUCT_TYPE_STANDARD = "standard"
+    PRODUCT_TYPE_USED = "used"
+    PRODUCT_TYPE_CHOICES = (
+        (PRODUCT_TYPE_STANDARD, "Standard product"),
+        (PRODUCT_TYPE_USED, "Used product"),
+    )
+
     RELATED_PRODUCT_MODE_NONE = "none"
     RELATED_PRODUCT_MODE_MANUAL = "manual"
     RELATED_PRODUCT_MODE_AUTOMATIC = "automatic"
@@ -258,7 +265,24 @@ class Product(models.Model):
     )
 
     category = models.ForeignKey(Category,on_delete=models.CASCADE)
-    subcategory = models.ForeignKey( SubCategory,on_delete=models.CASCADE)
+    # Kept nullable so a product can be created without a subcategory, while
+    # the original field remains available for older clients and queries.
+    subcategory = models.ForeignKey(
+        SubCategory,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    subcategories = models.ManyToManyField(
+        SubCategory,
+        related_name="products",
+        blank=True,
+    )
+    product_type = models.CharField(
+        max_length=20,
+        choices=PRODUCT_TYPE_CHOICES,
+        default=PRODUCT_TYPE_STANDARD,
+    )
     brand = models.ForeignKey(
         Brand,
         on_delete=models.SET_NULL,
@@ -570,27 +594,48 @@ class ProductVariant(models.Model):
     color = models.ForeignKey(Color,on_delete=models.CASCADE, null=True, blank=True )
     regions = models.ManyToManyField(Region, blank=True)
     sku = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    option_values = models.JSONField(default=dict, blank=True)
     
     price_type = models.CharField(max_length=20, choices=PRICE_TYPE_CHOICES, default="single")
     price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text="For single price")
+    offer_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Optional direct sale price for a single-price variant.",
+    )
     stock = models.PositiveIntegerField(default=0, help_text="For single price")
-
-    class Meta:
-        unique_together = (
-            "product",
-            "color"
-        )
 
     def clean(self):
         super().clean()
-        if self.product_id and self.color_id is None:
+        if not isinstance(self.option_values, dict):
+            raise ValidationError({"option_values": "Option values must be an object."})
+        allowed_options = {"size", "connectivity", "finishing", "storage", "grade"}
+        normalized_options = {
+            str(key).strip().lower(): str(value).strip()
+            for key, value in self.option_values.items()
+            if str(value).strip()
+        }
+        unknown_options = set(normalized_options) - allowed_options
+        if unknown_options:
+            raise ValidationError(
+                {"option_values": f"Unsupported option(s): {', '.join(sorted(unknown_options))}."}
+            )
+        self.option_values = normalized_options
+
+        if self.product_id:
             duplicate = ProductVariant.objects.filter(
                 product_id=self.product_id,
-                color__isnull=True,
-            ).exclude(pk=self.pk).exists()
+                color_id=self.color_id,
+            ).exclude(pk=self.pk)
+            duplicate = any(
+                (item.option_values or {}) == normalized_options
+                for item in duplicate.only("option_values")
+            )
             if duplicate:
                 raise ValidationError(
-                    {"color": "A product can have only one no-color variant."}
+                    {"option_values": "This product variant combination already exists."}
                 )
         if self.price_type == "single" and self.price is None:
             raise ValidationError({"price": "A single-price variant requires a price."})
@@ -598,6 +643,15 @@ class ProductVariant(models.Model):
             raise ValidationError(
                 {"price": "A multiple-price variant must store prices on its units."}
             )
+        if self.price_type == "multiple" and self.offer_price is not None:
+            raise ValidationError(
+                {"offer_price": "A multiple-price variant must store sale prices on its units."}
+            )
+        if self.offer_price is not None:
+            if self.price is None or self.offer_price <= 0 or self.offer_price >= self.price:
+                raise ValidationError(
+                    {"offer_price": "Offer price must be greater than zero and lower than the price."}
+                )
 
     def __str__(self):
         parts = [self.product.name]
@@ -620,12 +674,20 @@ class ProductVariantUnit(models.Model):
     sku = models.CharField(max_length=100, unique=True, null=True, blank=True)
     grade = models.CharField(max_length=100, blank=True, default="")
     price = models.DecimalField( max_digits=10,decimal_places=2)
+    offer_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Optional direct sale price for this unit.",
+    )
     stock = models.PositiveIntegerField( default=0)
 
     class Meta:
         unique_together = (
             "variant",
-            "unit"
+            "unit",
+            "grade",
         )
 
     def clean(self):
@@ -641,6 +703,12 @@ class ProductVariantUnit(models.Model):
         if self.unit.unit_type_id != self.unit_type_id:
             raise ValidationError(
                 {"unit_type": "The selected unit does not belong to this unit type."}
+            )
+        if self.offer_price is not None and (
+            self.offer_price <= 0 or self.offer_price >= self.price
+        ):
+            raise ValidationError(
+                {"offer_price": "Offer price must be greater than zero and lower than the price."}
             )
 
     def __str__(self):
