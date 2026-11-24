@@ -30,6 +30,7 @@ from .models import (
     Coupon,
     CouponUsage,
     Color,
+    Grade,
     HeroBanner,
     HeroSideBanner,
     Offer,
@@ -612,6 +613,31 @@ class AdminColorViewSet(AdminModelViewSet):
         return ColorAdminSerializer
 
 
+class AdminGradeViewSet(AdminModelViewSet):
+    queryset = Grade.objects.all().order_by("name", "id")
+    search_fields = ("name",)
+
+    def get_serializer_class(self):
+        class GradeAdminSerializer(serializers.ModelSerializer):
+            class Meta:
+                model = Grade
+                fields = ("id", "name")
+                read_only_fields = ("id",)
+
+            def validate_name(self, value):
+                value = value.strip()
+                if not value:
+                    raise serializers.ValidationError("A grade name is required.")
+                duplicate = Grade.objects.filter(name__iexact=value)
+                if self.instance:
+                    duplicate = duplicate.exclude(pk=self.instance.pk)
+                if duplicate.exists():
+                    raise serializers.ValidationError("A grade with this name already exists.")
+                return value
+
+        return GradeAdminSerializer
+
+
 class AdminUnitTypeViewSet(AdminModelViewSet):
     queryset = UnitType.objects.all().order_by("name")
     search_fields = ("name",)
@@ -1191,6 +1217,7 @@ ADMIN_RESOURCES = (
     ("subcategories", SubCategory, "admin/manage/subcategories/"),
     ("offers", Offer, "admin/manage/offers/"),
     ("colors", Color, "admin/manage/colors/"),
+    ("grades", Grade, "admin/manage/grades/"),
     ("unit-types", UnitType, "admin/manage/unit-types/"),
     ("units", Unit, "admin/manage/units/"),
     ("regions", Region, "admin/manage/regions/"),

@@ -206,6 +206,28 @@ class Color(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class Grade(models.Model):
+    """Reusable condition/grade labels for used-product variants."""
+
+    name = models.CharField(max_length=100, unique=True)
+
+    class Meta:
+        ordering = ("name", "id")
+
+    def clean(self):
+        super().clean()
+        self.name = self.name.strip()
+        if not self.name:
+            raise ValidationError({"name": "A grade name is required."})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.name
     
 class UnitType(models.Model):
 

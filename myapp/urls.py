@@ -135,6 +135,7 @@ from .super_admin_api import (
     AdminCartViewSet,
     AdminCategoryViewSet,
     AdminColorViewSet,
+    AdminGradeViewSet,
     AdminCouponUsageViewSet,
     AdminCouponViewSet,
     AdminHeroBannerViewSet,
@@ -169,6 +170,7 @@ router.register(r'admin/manage/categories', AdminCategoryViewSet, basename='admi
 router.register(r'admin/manage/subcategories', AdminSubCategoryViewSet, basename='admin-manage-subcategory')
 router.register(r'admin/manage/offers', AdminOfferViewSet, basename='admin-manage-offer')
 router.register(r'admin/manage/colors', AdminColorViewSet, basename='admin-manage-color')
+router.register(r'admin/manage/grades', AdminGradeViewSet, basename='admin-manage-grade')
 router.register(r'admin/manage/unit-types', AdminUnitTypeViewSet, basename='admin-manage-unit-type')
 router.register(r'admin/manage/units', AdminUnitViewSet, basename='admin-manage-unit')
 router.register(r'admin/manage/regions', AdminRegionViewSet, basename='admin-manage-region')

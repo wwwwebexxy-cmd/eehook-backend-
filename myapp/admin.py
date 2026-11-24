@@ -84,6 +84,12 @@ class ColorAdmin(admin.ModelAdmin):
 
     list_display = ("name","code")
 
+
+@admin.register(Grade)
+class GradeAdmin(admin.ModelAdmin):
+    list_display = ("name",)
+    search_fields = ("name",)
+
 @admin.register(UnitType)
 class UnitTypeAdmin(admin.ModelAdmin):
     list_display = ("name",)
